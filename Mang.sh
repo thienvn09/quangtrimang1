@@ -12,9 +12,8 @@ fi
 # Biến cấu hình
 IP_STATIC="192.168.1.10"
 NETMASK="24"
-GATEWAY="192.168.1.1"
 DNS_SERVER="$IP_STATIC"
-INTERFACE=$(ip -o -4 route show to default | awk '{print $5}')
+INTERFACE="enp0s3"  # Cố định giao diện
 DOMAIN="toanha.local"
 SHARE_DIR="/srv/share"
 
@@ -29,11 +28,11 @@ network:
     $INTERFACE:
       addresses:
         - $IP_STATIC/$NETMASK
-      gateway4: $GATEWAY
       nameservers:
-        addresses: [$DNS_SERVER, 8.8.8.8]
+        addresses: [$DNS_SERVER]
 EOL
 
+chmod 644 /etc/netplan/01-netcfg.yaml
 netplan apply
 echo "Đã cấu hình IP tĩnh cho interface: $INTERFACE"
 
@@ -44,7 +43,6 @@ apt install isc-dhcp-server -y
 cat <<EOL > /etc/dhcp/dhcpd.conf
 subnet 192.168.1.0 netmask 255.255.255.0 {
   range 192.168.1.100 192.168.1.200;
-  option routers $GATEWAY;
   option domain-name-servers $DNS_SERVER;
   option domain-name "$DOMAIN";
 }
@@ -77,6 +75,16 @@ cat <<EOL > /etc/bind/db.$DOMAIN
 @ IN NS $DOMAIN.
 @ IN A $IP_STATIC
 server IN A $IP_STATIC
+EOL
+
+# Tắt DNSSEC
+cat <<EOL > /etc/bind/named.conf.options
+options {
+  directory "/var/cache/bind";
+  dnssec-validation no;
+  listen-on port 53 { any; };
+  allow-query { any; };
+};
 EOL
 
 named-checkconf
