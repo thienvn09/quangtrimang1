@@ -1,78 +1,116 @@
 #!/bin/bash
 
-# Cập nhật hệ thống
-echo "Cập nhật hệ thống..."
-sudo apt update && sudo apt upgrade -y
+# Thoát nếu có lỗi
+set -e
 
-# Cài đặt DHCP server
-echo "Cài đặt DHCP server..."
-sudo apt install isc-dhcp-server -y
-cat <<EOL | sudo tee /etc/dhcp/dhcpd.conf
+# Kiểm tra quyền sudo
+if [ "$EUID" -ne 0 ]; then
+  echo "Vui lòng chạy script với quyền root hoặc sudo."
+  exit 1
+fi
+
+# Biến cấu hình
+IP_STATIC="192.168.1.10"
+NETMASK="24"
+GATEWAY="192.168.1.1"
+DNS_SERVER="$IP_STATIC"
+INTERFACE=$(ip -o -4 route show to default | awk '{print $5}')
+DOMAIN="toanha.local"
+SHARE_DIR="/srv/share"
+
+echo "==== Cập nhật hệ thống ===="
+apt update && apt upgrade -y
+
+echo "==== Cấu hình địa chỉ IP tĩnh ===="
+cat <<EOL > /etc/netplan/01-netcfg.yaml
+network:
+  version: 2
+  ethernets:
+    $INTERFACE:
+      addresses:
+        - $IP_STATIC/$NETMASK
+      gateway4: $GATEWAY
+      nameservers:
+        addresses: [$DNS_SERVER, 8.8.8.8]
+EOL
+
+netplan apply
+echo "Đã cấu hình IP tĩnh cho interface: $INTERFACE"
+
+echo "==== Cài đặt DHCP Server ===="
+apt install isc-dhcp-server -y
+
+# Cấu hình DHCP
+cat <<EOL > /etc/dhcp/dhcpd.conf
 subnet 192.168.1.0 netmask 255.255.255.0 {
   range 192.168.1.100 192.168.1.200;
-  option routers 192.168.1.1;
-  option domain-name-servers 192.168.1.10;
-  option domain-name "toanha.local";
+  option routers $GATEWAY;
+  option domain-name-servers $DNS_SERVER;
+  option domain-name "$DOMAIN";
 }
 EOL
-sudo sed -i 's/INTERFACESv4=""/INTERFACESv4="enp0s3"/' /etc/default/isc-dhcp-server
-sudo systemctl restart isc-dhcp-server
 
-# Cài đặt DNS server (bind9)
-echo "Cài đặt DNS server..."
-sudo apt install bind9 -y
-cat <<EOL | sudo tee /etc/bind/named.conf.local
-zone "toanha.local" {
+# Chỉ định interface cho DHCP
+sed -i "s/^INTERFACESv4=.*/INTERFACESv4=\"$INTERFACE\"/" /etc/default/isc-dhcp-server
+systemctl restart isc-dhcp-server
+systemctl enable isc-dhcp-server
+
+echo "==== Cài đặt DNS Server (BIND9) ===="
+apt install bind9 -y
+
+# Tạo zone DNS
+cat <<EOL > /etc/bind/named.conf.local
+zone "$DOMAIN" {
   type master;
-  file "/etc/bind/db.toanha.local";
+  file "/etc/bind/db.$DOMAIN";
 };
 EOL
-cat <<EOL | sudo tee /etc/bind/db.toanha.local
+
+cat <<EOL > /etc/bind/db.$DOMAIN
 \$TTL 604800
-@ IN SOA toanha.local. root.toanha.local. (
+@ IN SOA $DOMAIN. root.$DOMAIN. (
   2         ; Serial
   604800    ; Refresh
   86400     ; Retry
   2419200   ; Expire
   604800 )  ; Negative Cache TTL
-@ IN NS toanha.local.
-@ IN A 192.168.1.10
-server IN A 192.168.1.10
+@ IN NS $DOMAIN.
+@ IN A $IP_STATIC
+server IN A $IP_STATIC
 EOL
-sudo systemctl restart bind9 || sudo systemctl restart named
 
-# Cài đặt Samba để chia sẻ tệp
-echo "Cài đặt Samba..."
-sudo apt install samba -y
-sudo mkdir -p /srv/share
-sudo chmod 777 /srv/share
-cat <<EOL | sudo tee -a /etc/samba/smb.conf
+named-checkconf
+named-checkzone "$DOMAIN" /etc/bind/db.$DOMAIN
+systemctl restart bind9
+systemctl enable bind9
+
+echo "==== Cài đặt Samba ===="
+apt install samba -y
+
+mkdir -p $SHARE_DIR
+chmod 777 $SHARE_DIR
+
+# Cấu hình chia sẻ công khai
+cat <<EOL >> /etc/samba/smb.conf
+
 [public]
-  path = /srv/share
-  writable = yes
-  browsable = yes
-  guest ok = yes
+   path = $SHARE_DIR
+   writable = yes
+   browsable = yes
+   guest ok = yes
 EOL
-sudo systemctl restart smbd
 
-# Cấu hình firewall
-echo "Cấu hình firewall..."
-sudo ufw allow from 192.168.1.0/24
-sudo ufw enable
+systemctl restart smbd
+systemctl enable smbd
 
-# Gán IP tĩnh cho máy chủ
-echo "Cấu hình IP tĩnh..."
-cat <<EOL | sudo tee /etc/netplan/01-netcfg.yaml
-network:
-  version: 2
-  ethernets:
-    enp0s3:
-      addresses:
-        - 192.168.1.10/24
-      nameservers:
-        addresses: [192.168.1.10]
-EOL
-sudo chmod 644 /etc/netplan/01-netcfg.yaml
-sudo netplan apply
+echo "==== Cấu hình tường lửa (UFW) ===="
+ufw allow from 192.168.1.0/24
+ufw allow 67/udp     # DHCP
+ufw allow 53         # DNS
+ufw allow 'Samba'    # Mở các cổng 137-139, 445
+ufw --force enable
 
-echo "Cấu hình hoàn tất!"
+echo "==== Hoàn tất cấu hình máy chủ nội bộ ===="
+echo "🟢 IP máy chủ: $IP_STATIC"
+echo "🟢 Samba chia sẻ thư mục: $SHARE_DIR"
+echo "🟢 Domain nội bộ: $DOMAIN"
