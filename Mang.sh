@@ -6,60 +6,59 @@ if [ "$EUID" -ne 0 ]; then
   exit 1
 fi
 
-# Cấu hình IP
-INTERFACE_OFFICE="enp0s3"
-INTERFACE_SECURITY="enp0s8"
-IP_OFFICE="192.168.10.10"
-IP_SECURITY="192.168.20.10"
+# Cấu hình mạng
+INTERFACE_VANPHONG="enp0s3"
+INTERFACE_BAOVE="enp0s8"
+IP_VANPHONG="192.168.10.10"
+IP_BAOVE="192.168.20.10"
 NETMASK="24"
 DOMAIN="toanha.local"
-DNS_SERVER="$IP_OFFICE"
+DNS_SERVER="$IP_VANPHONG"
 
 echo "==== Cap nhat he thong ===="
 apt update && apt upgrade -y
 
-echo "==== Cau hinh IP tinh cho hai interface ===="
+echo "==== Cau hinh IP tinh cho 2 interface ===="
 cat <<EOF > /etc/netplan/01-netcfg.yaml
 network:
   version: 2
   ethernets:
-    $INTERFACE_OFFICE:
+    $INTERFACE_VANPHONG:
       addresses:
-        - $IP_OFFICE/$NETMASK
+        - $IP_VANPHONG/$NETMASK
       nameservers:
         addresses: [$DNS_SERVER]
-    $INTERFACE_SECURITY:
+    $INTERFACE_BAOVE:
       addresses:
-        - $IP_SECURITY/$NETMASK
+        - $IP_BAOVE/$NETMASK
 EOF
 
 netplan apply
 
-# === Cài DHCP ===
 echo "==== Cai DHCP Server ===="
 apt install isc-dhcp-server -y
 
 cat <<EOF > /etc/dhcp/dhcpd.conf
 subnet 192.168.10.0 netmask 255.255.255.0 {
   range 192.168.10.100 192.168.10.200;
-  option routers 192.168.10.10;
+  option routers $IP_VANPHONG;
   option domain-name-servers $DNS_SERVER;
   option domain-name "$DOMAIN";
 }
+
 subnet 192.168.20.0 netmask 255.255.255.0 {
   range 192.168.20.100 192.168.20.200;
-  option routers 192.168.20.10;
+  option routers $IP_BAOVE;
   option domain-name-servers $DNS_SERVER;
   option domain-name "$DOMAIN";
 }
 EOF
 
-sed -i "s/^INTERFACESv4=.*/INTERFACESv4=\"$INTERFACE_OFFICE $INTERFACE_SECURITY\"/" /etc/default/isc-dhcp-server
+sed -i "s/^INTERFACESv4=.*/INTERFACESv4=\"$INTERFACE_VANPHONG $INTERFACE_BAOVE\"/" /etc/default/isc-dhcp-server
 systemctl restart isc-dhcp-server
 systemctl enable isc-dhcp-server
 
-# === DNS Server (Bind9) ===
-echo "==== Cai DNS (BIND9) ===="
+echo "==== Cai DNS (Bind9) ===="
 apt install bind9 -y
 
 cat <<EOF > /etc/bind/named.conf.local
@@ -78,8 +77,8 @@ cat <<EOF > /etc/bind/db.$DOMAIN
   2419200   ; Expire
   604800 )  ; Negative Cache TTL
 @ IN NS $DOMAIN.
-@ IN A $IP_OFFICE
-server IN A $IP_OFFICE
+@ IN A $IP_VANPHONG
+server IN A $IP_VANPHONG
 EOF
 
 cat <<EOF > /etc/bind/named.conf.options
@@ -96,66 +95,97 @@ named-checkzone "$DOMAIN" /etc/bind/db.$DOMAIN
 systemctl restart bind9
 systemctl enable bind9
 
-# === Samba Setup ===
 echo "==== Cai dat Samba ===="
 apt install samba -y
 
-# Tạo nhóm và thư mục chia sẻ theo tầng
-groupadd -f office
-groupadd -f security
+# Tạo nhóm chia sẻ
+groupadd -f vanphong
+groupadd -f baove
+groupadd -f nhansu
+groupadd -f ketoan
 
-mkdir -p /srv/share/office
-mkdir -p /srv/share/security
+# Tạo thư mục chia sẻ
+mkdir -p /srv/share/vanphong
+mkdir -p /srv/share/baove
+mkdir -p /srv/share/nhansu
+mkdir -p /srv/share/ketoan
 
-chown root:office /srv/share/office
-chown root:security /srv/share/security
+# Phân quyền thư mục
+chown root:vanphong /srv/share/vanphong
+chown root:baove /srv/share/baove
+chown root:nhansu /srv/share/nhansu
+chown root:ketoan /srv/share/ketoan
 
-chmod 2770 /srv/share/office
-chmod 2770 /srv/share/security
+chmod 2770 /srv/share/vanphong
+chmod 2770 /srv/share/baove
+chmod 2770 /srv/share/nhansu
+chmod 2770 /srv/share/ketoan
 
-# Tạo user mẫu cho mỗi tầng
-useradd -m -s /bin/bash vanphong1
-useradd -m -s /bin/bash vanphong2
-useradd -m -s /bin/bash baove1
-useradd -m -s /bin/bash baove2
+# Tạo người dùng và gán nhóm
+useradd -m -s /bin/bash LinhKeToan
+useradd -m -s /bin/bash TaiNhanSu
+useradd -m -s /bin/bash ThienBaoVe
+useradd -m -s /bin/bash Nhanbaove
+useradd -m -s /bin/bash Nhannhansu
+useradd -m -s /bin/bash BaoKeToan
 
-# Gán group
-usermod -aG office vanphong1
-usermod -aG office vanphong2
-usermod -aG security baove1
-usermod -aG security baove2
+# Gán người dùng vào nhóm
+usermod -aG vanphong LinhKeToan
+usermod -aG vanphong TaiNhanSu
+usermod -aG baove ThienBaoVe
+usermod -aG baove Nhanbaove
+usermod -aG nhansu Nhannhansu
+usermod -aG ketoan BaoKeToan
 
-# Đặt mật khẩu Samba
-echo -e "123456\n123456" | smbpasswd -a vanphong1
-echo -e "123456\n123456" | smbpasswd -a vanphong2
-echo -e "123456\n123456" | smbpasswd -a baove1
-echo -e "123456\n123456" | smbpasswd -a baove2
+# Đặt mật khẩu Samba cho người dùng
+for user in LinhKeToan TaiNhanSu ThienBaoVe Nhanbaove Nhannhansu BaoKeToan; do
+  echo -e "123456\n123456" | smbpasswd -a $user
+done
 
+# Cấu hình chia sẻ Samba
 cat <<EOF >> /etc/samba/smb.conf
 
-[Office]
-   path = /srv/share/office
+[VanPhong]
+   path = /srv/share/vanphong
    writable = yes
    browsable = yes
-   valid users = @office
+   valid users = @vanphong
    create mask = 0660
    directory mask = 2770
-   force group = office
+   force group = vanphong
 
-[Security]
-   path = /srv/share/security
+[BaoVe]
+   path = /srv/share/baove
    writable = yes
    browsable = yes
-   valid users = @security
+   valid users = @baove
    create mask = 0660
    directory mask = 2770
-   force group = security
+   force group = baove
+
+[NhanSu]
+   path = /srv/share/nhansu
+   writable = yes
+   browsable = yes
+   valid users = @nhansu
+   create mask = 0660
+   directory mask = 2770
+   force group = nhansu
+
+[KeToan]
+   path = /srv/share/ketoan
+   writable = yes
+   browsable = yes
+   valid users = @ketoan
+   create mask = 0660
+   directory mask = 2770
+   force group = ketoan
 EOF
 
 systemctl restart smbd
 systemctl enable smbd
 
-# === UFW ===
+echo "==== Cau hinh tuong lua (UFW) ===="
 ufw allow from 192.168.10.0/24
 ufw allow from 192.168.20.0/24
 ufw allow 67/udp
@@ -164,8 +194,12 @@ ufw allow 'Samba'
 ufw --force enable
 
 echo "==== CAU HINH HOAN TAT ===="
-echo "IP Office: $IP_OFFICE"
-echo "IP Security: $IP_SECURITY"
-echo "Domain noi bo: $DOMAIN"
-echo "Thu muc Office: /srv/share/office"
-echo "Thu muc Security: /srv/share/security"
+echo "IP vanphong: $IP_VANPHONG"
+echo "IP baove: $IP_BAOVE"
+echo "Ten mien noi bo: $DOMAIN"
+echo "Thu muc chia se: "
+echo " - VanPhong: /srv/share/vanphong"
+echo " - BaoVe: /srv/share/baove"
+echo " - NhanSu: /srv/share/nhansu"
+echo " - KeToan: /srv/share/ketoan"
+echo "User mac dinh: LinhKeToan, TaiNhanSu, ThienBaoVe, Nhanbaove, Nhannhansu, BaoKeToan (mat khau: 123456)"
