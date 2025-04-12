@@ -1,127 +1,171 @@
 #!/bin/bash
-
-# Dung script neu co loi
 set -e
 
-# Kiem tra quyen root
 if [ "$EUID" -ne 0 ]; then
   echo "Hay chay script voi quyen root hoac sudo."
   exit 1
 fi
 
-# Bien cau hinh
-IP_STATIC="192.168.1.10"
+# Cấu hình IP
+INTERFACE_OFFICE="enp0s3"
+INTERFACE_SECURITY="enp0s8"
+IP_OFFICE="192.168.10.10"
+IP_SECURITY="192.168.20.10"
 NETMASK="24"
-DNS_SERVER="$IP_STATIC"
-INTERFACE="enp0s3"
 DOMAIN="toanha.local"
-SHARE_DIR="/srv/share"
-SHARE_GROUP="sambashare"
+DNS_SERVER="$IP_OFFICE"
 
 echo "==== Cap nhat he thong ===="
 apt update && apt upgrade -y
 
-echo "==== Cau hinh dia chi IP tinh ===="
-cat <<EOL > /etc/netplan/01-netcfg.yaml
+echo "==== Cau hinh IP tinh cho hai interface ===="
+cat <<EOF > /etc/netplan/01-netcfg.yaml
 network:
   version: 2
   ethernets:
-    $INTERFACE:
+    $INTERFACE_OFFICE:
       addresses:
-        - $IP_STATIC/$NETMASK
+        - $IP_OFFICE/$NETMASK
       nameservers:
         addresses: [$DNS_SERVER]
-EOL
+    $INTERFACE_SECURITY:
+      addresses:
+        - $IP_SECURITY/$NETMASK
+EOF
 
-chmod 644 /etc/netplan/01-netcfg.yaml
 netplan apply
-echo "Da cau hinh IP tinh cho interface: $INTERFACE"
 
-echo "==== Cai dat DHCP server ===="
+# === Cài DHCP ===
+echo "==== Cai DHCP Server ===="
 apt install isc-dhcp-server -y
 
-cat <<EOL > /etc/dhcp/dhcpd.conf
-subnet 192.168.1.0 netmask 255.255.255.0 {
-  range 192.168.1.100 192.168.1.200;
+cat <<EOF > /etc/dhcp/dhcpd.conf
+subnet 192.168.10.0 netmask 255.255.255.0 {
+  range 192.168.10.100 192.168.10.200;
+  option routers 192.168.10.10;
   option domain-name-servers $DNS_SERVER;
   option domain-name "$DOMAIN";
 }
-EOL
+subnet 192.168.20.0 netmask 255.255.255.0 {
+  range 192.168.20.100 192.168.20.200;
+  option routers 192.168.20.10;
+  option domain-name-servers $DNS_SERVER;
+  option domain-name "$DOMAIN";
+}
+EOF
 
-sed -i "s/^INTERFACESv4=.*/INTERFACESv4=\"$INTERFACE\"/" /etc/default/isc-dhcp-server
+sed -i "s/^INTERFACESv4=.*/INTERFACESv4=\"$INTERFACE_OFFICE $INTERFACE_SECURITY\"/" /etc/default/isc-dhcp-server
 systemctl restart isc-dhcp-server
 systemctl enable isc-dhcp-server
 
-echo "==== Cai dat DNS server (BIND9) ===="
+# === DNS Server (Bind9) ===
+echo "==== Cai DNS (BIND9) ===="
 apt install bind9 -y
 
-cat <<EOL > /etc/bind/named.conf.local
+cat <<EOF > /etc/bind/named.conf.local
 zone "$DOMAIN" {
   type master;
   file "/etc/bind/db.$DOMAIN";
 };
-EOL
+EOF
 
-cat <<EOL > /etc/bind/db.$DOMAIN
+cat <<EOF > /etc/bind/db.$DOMAIN
 \$TTL 604800
 @ IN SOA $DOMAIN. root.$DOMAIN. (
-  2         ; Serial
+  3         ; Serial
   604800    ; Refresh
   86400     ; Retry
   2419200   ; Expire
   604800 )  ; Negative Cache TTL
 @ IN NS $DOMAIN.
-@ IN A $IP_STATIC
-server IN A $IP_STATIC
-EOL
+@ IN A $IP_OFFICE
+server IN A $IP_OFFICE
+EOF
 
-cat <<EOL > /etc/bind/named.conf.options
+cat <<EOF > /etc/bind/named.conf.options
 options {
   directory "/var/cache/bind";
   dnssec-validation no;
   listen-on port 53 { any; };
   allow-query { any; };
 };
-EOL
+EOF
 
 named-checkconf
 named-checkzone "$DOMAIN" /etc/bind/db.$DOMAIN
 systemctl restart bind9
 systemctl enable bind9
 
+# === Samba Setup ===
 echo "==== Cai dat Samba ===="
 apt install samba -y
 
-groupadd -f $SHARE_GROUP
-mkdir -p $SHARE_DIR
-chown root:$SHARE_GROUP $SHARE_DIR
-chmod 2770 $SHARE_DIR
+# Tạo nhóm và thư mục chia sẻ theo tầng
+groupadd -f office
+groupadd -f security
 
-usermod -aG $SHARE_GROUP nobody
+mkdir -p /srv/share/office
+mkdir -p /srv/share/security
 
-cat <<EOL >> /etc/samba/smb.conf
+chown root:office /srv/share/office
+chown root:security /srv/share/security
 
-[public]
-   path = $SHARE_DIR
+chmod 2770 /srv/share/office
+chmod 2770 /srv/share/security
+
+# Tạo user mẫu cho mỗi tầng
+useradd -m -s /bin/bash vanphong1
+useradd -m -s /bin/bash vanphong2
+useradd -m -s /bin/bash baove1
+useradd -m -s /bin/bash baove2
+
+# Gán group
+usermod -aG office vanphong1
+usermod -aG office vanphong2
+usermod -aG security baove1
+usermod -aG security baove2
+
+# Đặt mật khẩu Samba
+echo -e "123456\n123456" | smbpasswd -a vanphong1
+echo -e "123456\n123456" | smbpasswd -a vanphong2
+echo -e "123456\n123456" | smbpasswd -a baove1
+echo -e "123456\n123456" | smbpasswd -a baove2
+
+cat <<EOF >> /etc/samba/smb.conf
+
+[Office]
+   path = /srv/share/office
    writable = yes
    browsable = yes
-   guest ok = yes
+   valid users = @office
    create mask = 0660
    directory mask = 2770
-   force group = $SHARE_GROUP
-EOL
+   force group = office
+
+[Security]
+   path = /srv/share/security
+   writable = yes
+   browsable = yes
+   valid users = @security
+   create mask = 0660
+   directory mask = 2770
+   force group = security
+EOF
 
 systemctl restart smbd
 systemctl enable smbd
 
-echo "==== Cau hinh tuong lua (UFW) ===="
-ufw allow from 192.168.1.0/24
+# === UFW ===
+ufw allow from 192.168.10.0/24
+ufw allow from 192.168.20.0/24
 ufw allow 67/udp
 ufw allow 53
 ufw allow 'Samba'
 ufw --force enable
 
-echo "==== Hoan tat cau hinh may chu noi bo ===="
-echo "Dia chi IP: $IP_STATIC"
-echo "Thu muc chia se Samba: $SHARE_DIR"
-echo "Ten mien noi bo: $DOMAIN"
+echo "==== CAU HINH HOAN TAT ===="
+echo "IP Office: $IP_OFFICE"
+echo "IP Security: $IP_SECURITY"
+echo "Domain noi bo: $DOMAIN"
+echo "Thu muc Office: /srv/share/office"
+echo "Thu muc Security: /srv/share/security"
