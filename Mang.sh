@@ -27,12 +27,12 @@ fi
 # Tao file log
 # ========================
 touch $LOG_FILE
-echo "=== BAT DAU CAI DAT: $(date) ===" | tee -a $LOG_FILE
+echo "=== BAT DAU CAI DAT: $(date) ===" | tee $LOG_FILE
 
 # ========================
 # Kiem tra giao dien mang
 # ========================
-echo "==== Kiem tra giao dien mang ===="
+echo "==== Kiem tra giao dien mang ====" | tee -a $LOG_FILE
 for iface in $INTERFACE_INTERNET $INTERFACE_VANPHONG $INTERFACE_BAOVE; do
   if ! ip link show $iface > /dev/null 2>&1; then
     echo " Giao dien $iface khong ton tai." | tee -a $LOG_FILE
@@ -43,7 +43,7 @@ done
 # ========================
 # Cau hinh IP tinh voi Netplan
 # ========================
-echo "==== Cau hinh IP tinh ===="
+echo "==== Cau hinh IP tinh ====" | tee -a $LOG_FILE
 
 cat <<EOF > /etc/netplan/01-netcfg.yaml
 network:
@@ -63,42 +63,34 @@ network:
 EOF
 
 chmod 600 /etc/netplan/01-netcfg.yaml
-echo "Ap dung netplan..." | tee -a $LOG_FILE
-if netplan apply >> $LOG_FILE 2>&1; then
-  echo " Netplan da duoc ap dung." | tee -a $LOG_FILE
-else
-  echo " Loi netplan. Kiem tra $LOG_FILE" | tee -a $LOG_FILE
+netplan apply >> $LOG_FILE 2>&1 || {
+  echo " Loi khi ap dung Netplan." | tee -a $LOG_FILE
   exit 1
-fi
+}
+echo "Netplan da duoc ap dung." | tee -a $LOG_FILE
 
 # ========================
 # Kiem tra ket noi Internet
 # ========================
-echo "==== Kiem tra ket noi Internet ===="
-if ping -c 1 8.8.8.8 > /dev/null 2>&1; then
-  echo " Ket noi Internet OK." | tee -a $LOG_FILE
+echo "==== Kiem tra ket noi Internet ====" | tee -a $LOG_FILE
+if ping -c 2 8.8.8.8 > /dev/null 2>&1; then
+  echo "Ket noi Internet OK." | tee -a $LOG_FILE
 else
-  echo " Khong co ket noi Internet. Kiem tra NAT va DNS." | tee -a $LOG_FILE
+  echo " Khong co ket noi Internet. Kiem tra NAT hoac cab mang." | tee -a $LOG_FILE
   exit 1
 fi
 
 # ========================
 # Cap nhat he thong
 # ========================
-echo "==== Cap nhat he thong ===="
-apt update >> $LOG_FILE 2>&1 && apt upgrade -y >> $LOG_FILE 2>&1 || {
-  echo "Loi cap nhat he thong." | tee -a $LOG_FILE
-  exit 1
-}
+echo "==== Cap nhat he thong ====" | tee -a $LOG_FILE
+apt update >> $LOG_FILE 2>&1 && apt upgrade -y >> $LOG_FILE 2>&1
 
 # ========================
 # Cai dat DHCP Server
 # ========================
-echo "==== Cai dat DHCP Server ===="
-apt install isc-dhcp-server -y >> $LOG_FILE 2>&1 || {
-  echo " Loi cai DHCP." | tee -a $LOG_FILE
-  exit 1
-}
+echo "==== Cai dat DHCP Server ====" | tee -a $LOG_FILE
+apt install isc-dhcp-server -y >> $LOG_FILE 2>&1
 
 cat <<EOF > /etc/dhcp/dhcpd.conf
 subnet 192.168.10.0 netmask 255.255.255.0 {
@@ -116,20 +108,15 @@ subnet 192.168.20.0 netmask 255.255.255.0 {
 EOF
 
 echo "INTERFACESv4=\"$INTERFACE_VANPHONG $INTERFACE_BAOVE\"" > /etc/default/isc-dhcp-server
-
-systemctl restart isc-dhcp-server >> $LOG_FILE 2>&1 && systemctl enable isc-dhcp-server >> $LOG_FILE 2>&1 || {
-  echo " DHCP server loi khi khoi dong." | tee -a $LOG_FILE
-  exit 1
-}
+systemctl restart isc-dhcp-server >> $LOG_FILE 2>&1
+systemctl enable isc-dhcp-server >> $LOG_FILE 2>&1
+echo " DHCP Server da duoc cai dat va chay." | tee -a $LOG_FILE
 
 # ========================
 # Cai dat Bind9 DNS
 # ========================
-echo "==== Cai dat DNS Server ===="
-apt install bind9 -y >> $LOG_FILE 2>&1 || {
-  echo " Loi cai Bind9." | tee -a $LOG_FILE
-  exit 1
-}
+echo "==== Cai dat DNS Server ====" | tee -a $LOG_FILE
+apt install bind9 bind9utils bind9-doc -y >> $LOG_FILE 2>&1
 
 cat <<EOF > /etc/bind/named.conf.local
 zone "$DOMAIN" {
@@ -140,46 +127,48 @@ EOF
 
 cat <<EOF > /etc/bind/db.$DOMAIN
 \$TTL 604800
-@ IN SOA $DOMAIN. root.$DOMAIN. (
-  2         ; Serial
+@ IN SOA ns1.$DOMAIN. admin.$DOMAIN. (
+  3         ; Serial
   604800    ; Refresh
   86400     ; Retry
   2419200   ; Expire
   604800 )  ; Negative Cache TTL
-@ IN NS server.$DOMAIN.
+@ IN NS ns1.$DOMAIN.
 @ IN A $IP_INTERNET
-server IN A $IP_INTERNET
+ns1 IN A $IP_INTERNET
 EOF
 
 cat <<EOF > /etc/bind/named.conf.options
 options {
   directory "/var/cache/bind";
-  dnssec-validation no;
-  listen-on port 53 { any; };
+  recursion yes;
   allow-query { any; };
+  forwarders {
+    8.8.8.8;
+    1.1.1.1;
+  };
+  dnssec-validation no;
+  listen-on { any; };
 };
 EOF
 
-chmod 644 /etc/bind/named.conf.local /etc/bind/db.$DOMAIN /etc/bind/named.conf.options
+chmod 644 /etc/bind/{named.conf.local,named.conf.options,db.$DOMAIN}
 
-named-checkconf >> $LOG_FILE 2>&1 && named-checkzone "$DOMAIN" /etc/bind/db.$DOMAIN >> $LOG_FILE 2>&1 || {
-  echo " Loi cau hinh DNS." | tee -a $LOG_FILE
+named-checkconf >> $LOG_FILE 2>&1
+named-checkzone "$DOMAIN" /etc/bind/db.$DOMAIN >> $LOG_FILE 2>&1 || {
+  echo " Loi file zone DNS." | tee -a $LOG_FILE
   exit 1
 }
 
-systemctl restart bind9 >> $LOG_FILE 2>&1 && systemctl enable bind9 >> $LOG_FILE 2>&1 || {
-  echo " Loi khoi dong Bind9." | tee -a $LOG_FILE
-  exit 1
-}
+systemctl restart bind9 >> $LOG_FILE 2>&1
+systemctl enable bind9 >> $LOG_FILE 2>&1
+echo " Bind9 DNS Server da cau hinh dung va chay OK." | tee -a $LOG_FILE
 
 # ========================
 # Cai dat Samba va nguoi dung
 # ========================
-echo "==== Cai dat Samba ===="
-apt install samba -y >> $LOG_FILE 2>&1 || {
-  echo " Loi cai dat Samba." | tee -a $LOG_FILE
-  exit 1
-}
+echo "==== Cai dat Samba ====" | tee -a $LOG_FILE
+apt install samba -y >> $LOG_FILE 2>&1
 
 groupadd -f vanphong && groupadd -f baove && groupadd -f nhansu && groupadd -f ketoan
 mkdir -p /srv/share/{vanphong,baove,nhansu,ketoan}
@@ -189,7 +178,6 @@ chown root:nhansu /srv/share/nhansu
 chown root:ketoan /srv/share/ketoan
 chmod 2770 /srv/share/*
 
-# Tao nguoi dung va gan nhom
 declare -A USERS=(
   ["LinhKeToan"]="vanphong"
   ["TaiNhanSu"]="vanphong"
@@ -200,7 +188,7 @@ declare -A USERS=(
 )
 
 for user in "${!USERS[@]}"; do
-  useradd -m -s /bin/bash "$user"
+  useradd -m -s /bin/bash "$user" || true
   usermod -aG "${USERS[$user]}" "$user"
   echo -e "123456\n123456" | smbpasswd -a "$user" >> $LOG_FILE 2>&1
 done
@@ -243,39 +231,33 @@ cat <<EOF >> /etc/samba/smb.conf
    force group = ketoan
 EOF
 
-systemctl restart smbd >> $LOG_FILE 2>&1 && systemctl enable smbd >> $LOG_FILE 2>&1 || {
-  echo " Loi khoi dong Samba." | tee -a $LOG_FILE
-  exit 1
-}
+systemctl restart smbd >> $LOG_FILE 2>&1
+systemctl enable smbd >> $LOG_FILE 2>&1
+echo " Samba da cau hinh va chay OK." | tee -a $LOG_FILE
 
 # ========================
-# Bat IP Forward va Firewall
+# Cau hinh IP Forward va UFW
 # ========================
-echo "==== Cau hinh dinh tuyen va Firewall ===="
+echo "==== Cau hinh IP Forward va Firewall ====" | tee -a $LOG_FILE
 sysctl -w net.ipv4.ip_forward=1 >> $LOG_FILE
 echo "net.ipv4.ip_forward=1" >> /etc/sysctl.conf
 
+ufw allow 67/udp
+ufw allow 53
+ufw allow 'Samba'
 ufw allow in on $INTERFACE_INTERNET
 ufw allow in on $INTERFACE_VANPHONG
 ufw allow in on $INTERFACE_BAOVE
-ufw allow out on $INTERFACE_INTERNET
-ufw allow out on $INTERFACE_VANPHONG
-ufw allow out on $INTERFACE_BAOVE
-
-ufw allow 67/udp
-ufw allow 53/udp
-ufw allow 53/tcp
-ufw allow 'Samba'
 ufw --force enable
 
 # ========================
 # Hoan tat
 # ========================
 echo "==== CAI DAT HOAN TAT ====" | tee -a $LOG_FILE
-echo "IP Internet (Card1): $IP_INTERNET" | tee -a $LOG_FILE
-echo "IP VanPhong (Card2): $IP_VANPHONG" | tee -a $LOG_FILE
-echo "IP BaoVe (Card3): $IP_BAOVE" | tee -a $LOG_FILE
+echo "IP Internet : $IP_INTERNET" | tee -a $LOG_FILE
+echo "IP VanPhong : $IP_VANPHONG" | tee -a $LOG_FILE
+echo "IP BaoVe    : $IP_BAOVE" | tee -a $LOG_FILE
 echo "DOMAIN noi bo: $DOMAIN" | tee -a $LOG_FILE
-echo "Nguoi dung: ${!USERS[@]} (pass: 123456)" | tee -a $LOG_FILE
-echo "Thong tin log tai $LOG_FILE" | tee -a $LOG_FILE
+echo "Nguoi dung: ${!USERS[@]} (mat khau: 123456)" | tee -a $LOG_FILE
+echo "Thong tin log tai: $LOG_FILE" | tee -a $LOG_FILE
 echo "=== HOAN TAT CAI DAT: $(date) ===" | tee -a $LOG_FILE
