@@ -70,17 +70,6 @@ netplan apply >> $LOG_FILE 2>&1 || {
 echo "Netplan da duoc ap dung." | tee -a $LOG_FILE
 
 # ========================
-# Kiem tra ket noi Internet
-# ========================
-echo "==== Kiem tra ket noi Internet ====" | tee -a $LOG_FILE
-if ping -c 2 8.8.8.8 > /dev/null 2>&1; then
-  echo "Ket noi Internet OK." | tee -a $LOG_FILE
-else
-  echo " Khong co ket noi Internet. Kiem tra NAT hoac cab mang." | tee -a $LOG_FILE
-  exit 1
-fi
-
-# ========================
 # Cap nhat he thong
 # ========================
 echo "==== Cap nhat he thong ====" | tee -a $LOG_FILE
