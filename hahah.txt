@@ -3,9 +3,9 @@
 # ========================
 # Biến cấu hình
 # ========================
-$INTERFACE_INTERNET = "Ethernet0"  # Tên giao diện mạng (cần kiểm tra trên máy Windows)
-$INTERFACE_VANPHONG = "Ethernet1"
-$INTERFACE_BAOVE = "Ethernet2"
+$INTERFACE_INTERNET = "Ethernet"
+$INTERFACE_VANPHONG = "Ethernet 2"
+$INTERFACE_BAOVE = "Ethernet 3"
 $IP_INTERNET = "192.168.100.10"
 $IP_VANPHONG = "192.168.10.10"
 $IP_BAOVE = "192.168.20.10"
@@ -32,8 +32,13 @@ if (-not ([Security.Principal.WindowsPrincipal] [Security.Principal.WindowsIdent
 # ========================
 "==== Kiem tra giao dien mang ====" | Out-File -FilePath $LOG_FILE -Append
 foreach ($iface in @($INTERFACE_INTERNET, $INTERFACE_VANPHONG, $INTERFACE_BAOVE)) {
-    if (-not (Get-NetAdapter -Name $iface -ErrorAction SilentlyContinue)) {
+    $adapter = Get-NetAdapter -Name $iface -ErrorAction SilentlyContinue
+    if (-not $adapter) {
         "Giao dien $iface khong ton tai." | Out-File -FilePath $LOG_FILE -Append
+        exit 1
+    }
+    if ($adapter.Status -ne "Up") {
+        "Giao dien $iface khong hoat dong (Media disconnected). Vui long kiem tra ket noi mang." | Out-File -FilePath $LOG_FILE -Append
         exit 1
     }
 }
@@ -60,7 +65,7 @@ Set-DnsClientServerAddress -InterfaceAlias $INTERFACE_BAOVE -ServerAddresses $DN
 # ========================
 "==== Cap nhat he thong ====" | Out-File -FilePath $LOG_FILE -Append
 Install-Module -Name PSWindowsUpdate -Force -Confirm:$false -ErrorAction Stop
-Import "Đang cài đặt module PSWindowsUpdate..." | Out-File -FilePath $LOG_FILE -Append
+"Đang cài đặt module PSWindowsUpdate..." | Out-File -FilePath $LOG_FILE -Append
 Import-Module -Name PSWindowsUpdate
 "Đang cập nhật hệ thống..." | Out-File -FilePath $LOG_FILE -Append
 Get-WindowsUpdate -Install -AcceptAll -AutoReboot:$false -ErrorAction Stop | Out-File -FilePath $LOG_FILE -Append
