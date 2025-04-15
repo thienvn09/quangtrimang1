@@ -170,16 +170,23 @@ systemctl status named >> $LOG_FILE 2>&1 || {
 }
 echo " Bind9 DNS Server da cau hinh dung va chay OK." | tee -a $LOG_FILE
 
+
 # ========================
-# Cai dat Samba va nguoi dung
+# Cai dat Samba va cau hinh chia se file
 # ========================
 echo "==== Cai dat Samba ====" | tee -a $LOG_FILE
-apt install samba -y >> $LOG_FILE 2>&1 || {
-  echo " Loi cai dat Samba. Kiem tra ket noi mang hoac kho luu tru." | tee -a $LOG_FILE
+
+# Cai dat Samba (loai bo samba-ad-dc neu co)
+apt remove -y samba-ad-dc >> $LOG_FILE 2>&1 || true
+apt install -y samba >> $LOG_FILE 2>&1 || {
+  echo " Loi cai dat Samba." | tee -a $LOG_FILE
   exit 1
 }
 
+# Tao cac nhom
 groupadd -f vanphong && groupadd -f baove && groupadd -f nhansu && groupadd -f ketoan
+
+# Tao thu muc chia se
 mkdir -p /srv/share/{vanphong,baove,nhansu,ketoan}
 chown root:vanphong /srv/share/vanphong
 chown root:baove /srv/share/baove
@@ -187,6 +194,7 @@ chown root:nhansu /srv/share/nhansu
 chown root:ketoan /srv/share/ketoan
 chmod 2770 /srv/share/*
 
+# Tao nguoi dung va gan vao nhom
 declare -A USERS=(
   ["LinhKeToan"]="vanphong"
   ["TaiNhanSu"]="vanphong"
@@ -197,16 +205,20 @@ declare -A USERS=(
 )
 
 for user in "${!USERS[@]}"; do
-  useradd -m -s /bin/bash "$user" || true
+  id "$user" &>/dev/null || useradd -m -s /bin/bash "$user"
   usermod -aG "${USERS[$user]}" "$user"
   echo -e "123456\n123456" | smbpasswd -a "$user" >> $LOG_FILE 2>&1
+  smbpasswd -e "$user" >> $LOG_FILE 2>&1
 done
 
+# Cau hinh file /etc/samba/smb.conf
 cat <<EOF > /etc/samba/smb.conf
 [global]
    workgroup = WORKGROUP
    server string = %h server
    security = user
+   map to guest = never
+   dns proxy = no
 
 [VanPhong]
    path = /srv/share/vanphong
@@ -245,14 +257,15 @@ cat <<EOF > /etc/samba/smb.conf
    force group = ketoan
 EOF
 
-systemctl daemon-reload >> $LOG_FILE 2>&1
-systemctl restart smbd >> $LOG_FILE 2>&1
-systemctl enable smbd >> $LOG_FILE 2>&1
+# Khoi dong lai dich vu Samba
+systemctl daemon-reexec
+systemctl restart smbd
+systemctl enable smbd
 systemctl status smbd >> $LOG_FILE 2>&1 || {
-  echo " Loi khoi dong Samba. Kiem tra log tai $LOG_FILE." | tee -a $LOG_FILE
+  echo " Loi khoi dong Samba." | tee -a $LOG_FILE
   exit 1
 }
-echo " Samba da cau hinh va chay OK." | tee -a $LOG_FILE
+echo " Samba da duoc cai va cau hinh dung cach." | tee -a $LOG_FILE
 
 # ========================
 # Cau hinh IP Forward va UFW
