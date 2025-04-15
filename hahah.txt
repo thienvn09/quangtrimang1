@@ -107,7 +107,7 @@ Add-DnsServerForwarder -IPAddress "8.8.8.8", "1.1.1.1" -ErrorAction Stop
 "DNS Server da duoc cau hinh dung va chay." | Out-File -FilePath $LOG_FILE -Append
 
 # ========================
-# Cài đặt và cấu hình chia sẻ file (File Sharing thay cho Samba)
+# Cài đặt và cấu hình chia sẻ file (SMB thay cho Samba)
 # ========================
 "==== Cai dat File Sharing ====" | Out-File -FilePath $LOG_FILE -Append
 
@@ -168,12 +168,16 @@ foreach ($path in $SHARE_ACLS.Keys) {
 "File Sharing da duoc cau hinh dung cach." | Out-File -FilePath $LOG_FILE -Append
 
 # ========================
-# Cấu hình IP Forward và Firewall
+# Cấu hình IP Forwarding và Firewall
 # ========================
 "==== Cau hinh IP Forward va Firewall ====" | Out-File -FilePath $LOG_FILE -Append
 
-# Bật IP Forwarding (Routing)
-Set-NetIPInterface -Forwarding Enabled -ErrorAction Stop
+# Bật IP Forwarding
+Install-WindowsFeature -Name Routing -IncludeManagementTools -ErrorAction Stop
+Start-Service RemoteAccess -ErrorAction Stop
+# Cấu hình RRAS cho LAN routing
+$rrasConfig = "netsh routing ip nat install; netsh routing ip nat add interface $($INTERFACE_INTERNET); netsh routing ip nat add interface $($INTERFACE_VANPHONG); netsh routing ip nat add interface $($INTERFACE_BAOVE)"
+Invoke-Expression $rrasConfig | Out-File -FilePath $LOG_FILE -Append
 
 # Cấu hình Windows Firewall
 New-NetFirewallRule -DisplayName "Allow DHCP" -Direction Inbound -Protocol UDP -LocalPort 67 -Action Allow -ErrorAction Stop
