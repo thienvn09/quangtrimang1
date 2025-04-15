@@ -48,7 +48,6 @@ foreach ($iface in @($INTERFACE_INTERNET, $INTERFACE_VANPHONG, $INTERFACE_BAOVE)
 # ========================
 "==== Cau hinh IP tinh ====" | Out-File -FilePath $LOG_FILE -Append
 
-# Cấu hình IP cho từng giao diện
 New-NetIPAddress -InterfaceAlias $INTERFACE_INTERNET -IPAddress $IP_INTERNET -PrefixLength 24 -DefaultGateway $IP_INTERNET -ErrorAction Stop | Out-File -FilePath $LOG_FILE -Append
 Set-DnsClientServerAddress -InterfaceAlias $INTERFACE_INTERNET -ServerAddresses ("8.8.8.8", "1.1.1.1") -ErrorAction Stop | Out-File -FilePath $LOG_FILE -Append
 
@@ -61,32 +60,18 @@ Set-DnsClientServerAddress -InterfaceAlias $INTERFACE_BAOVE -ServerAddresses $DN
 "IP tĩnh đã được áp dụng." | Out-File -FilePath $LOG_FILE -Append
 
 # ========================
-# Cập nhật hệ thống (Windows Update)
-# ========================
-"==== Cap nhat he thong ====" | Out-File -FilePath $LOG_FILE -Append
-Install-Module -Name PSWindowsUpdate -Force -Confirm:$false -ErrorAction Stop
-"Đang cài đặt module PSWindowsUpdate..." | Out-File -FilePath $LOG_FILE -Append
-Import-Module -Name PSWindowsUpdate
-"Đang cập nhật hệ thống..." | Out-File -FilePath $LOG_FILE -Append
-Get-WindowsUpdate -Install -AcceptAll -AutoReboot:$false -ErrorAction Stop | Out-File -FilePath $LOG_FILE -Append
-
-# ========================
 # Cài đặt và cấu hình DHCP Server
 # ========================
 "==== Cai dat DHCP Server ====" | Out-File -FilePath $LOG_FILE -Append
 
-# Cài đặt vai trò DHCP Server
 Install-WindowsFeature -Name DHCP -IncludeManagementTools -ErrorAction Stop | Out-File -FilePath $LOG_FILE -Append
 
-# Cấu hình DHCP Scope cho VanPhong
 Add-DhcpServerv4Scope -Name "VanPhong" -StartRange "192.168.10.100" -EndRange "192.168.10.200" -SubnetMask $NETMASK -State Active -ErrorAction Stop
 Set-DhcpServerv4OptionValue -ScopeId "192.168.10.0" -Router $IP_VANPHONG -DnsServer $DNS_SERVER -DnsDomain $DOMAIN -ErrorAction Stop
 
-# Cấu hình DHCP Scope cho BaoVe
 Add-DhcpServerv4Scope -Name "BaoVe" -StartRange "192.168.20.100" -EndRange "192.168.20.200" -SubnetMask $NETMASK -State Active -ErrorAction Stop
 Set-DhcpServerv4OptionValue -ScopeId "192.168.20.0" -Router $IP_BAOVE -DnsServer $DNS_SERVER -DnsDomain $DOMAIN -ErrorAction Stop
 
-# Khởi động DHCP Server
 Restart-Service -Name DHCPServer -ErrorAction Stop
 "DHCP Server da duoc cai dat va chay." | Out-File -FilePath $LOG_FILE -Append
 
@@ -95,10 +80,8 @@ Restart-Service -Name DHCPServer -ErrorAction Stop
 # ========================
 "==== Cai dat DNS Server ====" | Out-File -FilePath $LOG_FILE -Append
 
-# Cài đặt vai trò DNS Server
 Install-WindowsFeature -Name DNS -IncludeManagementTools -ErrorAction Stop | Out-File -FilePath $LOG_FILE -Append
 
-# Cấu hình DNS Zone
 Add-DnsServerPrimaryZone -Name $DOMAIN -ZoneFile "$DOMAIN.dns" -ErrorAction Stop
 Add-DnsServerResourceRecordA -ZoneName $DOMAIN -Name "ns1" -IPv4Address $IP_INTERNET -ErrorAction Stop
 Add-DnsServerResourceRecordA -ZoneName $DOMAIN -Name "@" -IPv4Address $IP_INTERNET -ErrorAction Stop
@@ -111,22 +94,18 @@ Add-DnsServerForwarder -IPAddress "8.8.8.8", "1.1.1.1" -ErrorAction Stop
 # ========================
 "==== Cai dat File Sharing ====" | Out-File -FilePath $LOG_FILE -Append
 
-# Cài đặt File Server Role
 Install-WindowsFeature -Name FS-FileServer -ErrorAction Stop | Out-File -FilePath $LOG_FILE -Append
 
-# Tạo các thư mục chia sẻ
 $SHARE_PATHS = @("C:\srv\share\vanphong", "C:\srv\share\baove", "C:\srv\share\nhansu", "C:\srv\share\ketoan")
 foreach ($path in $SHARE_PATHS) {
     New-Item -Path $path -ItemType Directory -Force | Out-Null
 }
 
-# Tạo các nhóm
 $Groups = @("vanphong", "baove", "nhansu", "ketoan")
 foreach ($group in $Groups) {
     New-LocalGroup -Name $group -ErrorAction SilentlyContinue
 }
 
-# Gán quyền truy cập cho thư mục
 $SHARE_ACLS = @{
     "C:\srv\share\vanphong" = "vanphong"
     "C:\srv\share\baove" = "baove"
@@ -141,7 +120,6 @@ foreach ($path in $SHARE_ACLS.Keys) {
     Set-Acl $path $acl
 }
 
-# Tạo người dùng và gán vào nhóm
 $USERS = @{
     "LinhKeToan" = "vanphong"
     "TaiNhanSu" = "vanphong"
@@ -158,7 +136,6 @@ foreach ($user in $USERS.Keys) {
     Add-LocalGroupMember -Group $group -Member $user -ErrorAction SilentlyContinue
 }
 
-# Tạo SMB Share
 foreach ($path in $SHARE_ACLS.Keys) {
     $shareName = Split-Path $path -Leaf
     $group = $SHARE_ACLS[$path]
@@ -172,14 +149,11 @@ foreach ($path in $SHARE_ACLS.Keys) {
 # ========================
 "==== Cau hinh IP Forward va Firewall ====" | Out-File -FilePath $LOG_FILE -Append
 
-# Bật IP Forwarding
 Install-WindowsFeature -Name Routing -IncludeManagementTools -ErrorAction Stop
 Start-Service RemoteAccess -ErrorAction Stop
-# Cấu hình RRAS cho LAN routing
 $rrasConfig = "netsh routing ip nat install; netsh routing ip nat add interface $($INTERFACE_INTERNET); netsh routing ip nat add interface $($INTERFACE_VANPHONG); netsh routing ip nat add interface $($INTERFACE_BAOVE)"
 Invoke-Expression $rrasConfig | Out-File -FilePath $LOG_FILE -Append
 
-# Cấu hình Windows Firewall
 New-NetFirewallRule -DisplayName "Allow DHCP" -Direction Inbound -Protocol UDP -LocalPort 67 -Action Allow -ErrorAction Stop
 New-NetFirewallRule -DisplayName "Allow DNS" -Direction Inbound -Protocol UDP -LocalPort 53 -Action Allow -ErrorAction Stop
 New-NetFirewallRule -DisplayName "Allow SMB" -Direction Inbound -Protocol TCP -LocalPort 445 -Action Allow -ErrorAction Stop
