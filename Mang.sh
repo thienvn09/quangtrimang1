@@ -84,13 +84,19 @@ fi
 # Cap nhat he thong
 # ========================
 echo "==== Cap nhat he thong ====" | tee -a $LOG_FILE
-apt update >> $LOG_FILE 2>&1 && apt upgrade -y >> $LOG_FILE 2>&1
+apt update >> $LOG_FILE 2>&1 && apt upgrade -y >> $LOG_FILE 2>&1 || {
+  echo " Loi cap nhat he thong. Kiem tra ket noi mang." | tee -a $LOG_FILE
+  exit 1
+}
 
 # ========================
 # Cai dat DHCP Server
 # ========================
 echo "==== Cai dat DHCP Server ====" | tee -a $LOG_FILE
-apt install isc-dhcp-server -y >> $LOG_FILE 2>&1
+apt install isc-dhcp-server -y >> $LOG_FILE 2>&1 || {
+  echo " Loi cai dat DHCP Server." | tee -a $LOG_FILE
+  exit 1
+}
 
 cat <<EOF > /etc/dhcp/dhcpd.conf
 subnet 192.168.10.0 netmask 255.255.255.0 {
@@ -110,13 +116,20 @@ EOF
 echo "INTERFACESv4=\"$INTERFACE_VANPHONG $INTERFACE_BAOVE\"" > /etc/default/isc-dhcp-server
 systemctl restart isc-dhcp-server >> $LOG_FILE 2>&1
 systemctl enable isc-dhcp-server >> $LOG_FILE 2>&1
+systemctl status isc-dhcp-server >> $LOG_FILE 2>&1 || {
+  echo " Loi khoi dong DHCP Server." | tee -a $LOG_FILE
+  exit 1
+}
 echo " DHCP Server da duoc cai dat va chay." | tee -a $LOG_FILE
 
 # ========================
 # Cai dat Bind9 DNS
 # ========================
 echo "==== Cai dat DNS Server ====" | tee -a $LOG_FILE
-apt install bind9 bind9utils bind9-doc -y >> $LOG_FILE 2>&1
+apt install bind9 bind9utils bind9-doc -y >> $LOG_FILE 2>&1 || {
+  echo " Loi cai dat Bind9." | tee -a $LOG_FILE
+  exit 1
+}
 
 cat <<EOF > /etc/bind/named.conf.local
 zone "$DOMAIN" {
@@ -161,14 +174,21 @@ named-checkzone "$DOMAIN" /etc/bind/db.$DOMAIN >> $LOG_FILE 2>&1 || {
 }
 
 systemctl restart bind9 >> $LOG_FILE 2>&1
-systemctl enable bind9 >> $LOG_FILE 2>&1
+systemctl enable named >> $LOG_FILE 2>&1 || true
+systemctl status named >> $LOG_FILE 2>&1 || {
+  echo " Loi khoi dong Bind9." | tee -a $LOG_FILE
+  exit 1
+}
 echo " Bind9 DNS Server da cau hinh dung va chay OK." | tee -a $LOG_FILE
 
 # ========================
 # Cai dat Samba va nguoi dung
 # ========================
 echo "==== Cai dat Samba ====" | tee -a $LOG_FILE
-apt install samba -y >> $LOG_FILE 2>&1
+apt install samba -y >> $LOG_FILE 2>&1 || {
+  echo " Loi cai dat Samba. Kiem tra ket noi mang hoac kho luu tru." | tee -a $LOG_FILE
+  exit 1
+}
 
 groupadd -f vanphong && groupadd -f baove && groupadd -f nhansu && groupadd -f ketoan
 mkdir -p /srv/share/{vanphong,baove,nhansu,ketoan}
@@ -193,7 +213,12 @@ for user in "${!USERS[@]}"; do
   echo -e "123456\n123456" | smbpasswd -a "$user" >> $LOG_FILE 2>&1
 done
 
-cat <<EOF >> /etc/samba/smb.conf
+cat <<EOF > /etc/samba/smb.conf
+[global]
+   workgroup = WORKGROUP
+   server string = %h server
+   security = user
+
 [VanPhong]
    path = /srv/share/vanphong
    valid users = @vanphong
@@ -231,8 +256,13 @@ cat <<EOF >> /etc/samba/smb.conf
    force group = ketoan
 EOF
 
+systemctl daemon-reload >> $LOG_FILE 2>&1
 systemctl restart smbd >> $LOG_FILE 2>&1
 systemctl enable smbd >> $LOG_FILE 2>&1
+systemctl status smbd >> $LOG_FILE 2>&1 || {
+  echo " Loi khoi dong Samba. Kiem tra log tai $LOG_FILE." | tee -a $LOG_FILE
+  exit 1
+}
 echo " Samba da cau hinh va chay OK." | tee -a $LOG_FILE
 
 # ========================
