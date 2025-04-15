@@ -60,7 +60,9 @@ Set-DnsClientServerAddress -InterfaceAlias $INTERFACE_BAOVE -ServerAddresses $DN
 # ========================
 "==== Cap nhat he thong ====" | Out-File -FilePath $LOG_FILE -Append
 Install-Module -Name PSWindowsUpdate -Force -Confirm:$false -ErrorAction Stop
+Import "Đang cài đặt module PSWindowsUpdate..." | Out-File -FilePath $LOG_FILE -Append
 Import-Module -Name PSWindowsUpdate
+"Đang cập nhật hệ thống..." | Out-File -FilePath $LOG_FILE -Append
 Get-WindowsUpdate -Install -AcceptAll -AutoReboot:$false -ErrorAction Stop | Out-File -FilePath $LOG_FILE -Append
 
 # ========================
@@ -100,7 +102,7 @@ Add-DnsServerForwarder -IPAddress "8.8.8.8", "1.1.1.1" -ErrorAction Stop
 "DNS Server da duoc cau hinh dung va chay." | Out-File -FilePath $LOG_FILE -Append
 
 # ========================
-# Cài đặt và cấu hình chia sẻ file (File Sharing)
+# Cài đặt và cấu hình chia sẻ file (File Sharing thay cho Samba)
 # ========================
 "==== Cai dat File Sharing ====" | Out-File -FilePath $LOG_FILE -Append
 
@@ -146,7 +148,7 @@ $USERS = @{
 
 foreach ($user in $USERS.Keys) {
     $group = $USERS[$user]
-    $password = ConvertTo-SecureString "123456" -AsPlainText -Force
+    $password = ConvertTo-SecureString "Adm!n2025" -AsPlainText -Force
     New-LocalUser -Name $user -Password $password -PasswordNeverExpires -AccountNeverExpires -ErrorAction SilentlyContinue
     Add-LocalGroupMember -Group $group -Member $user -ErrorAction SilentlyContinue
 }
@@ -182,6 +184,6 @@ New-NetFirewallRule -DisplayName "Allow Interfaces" -Direction Inbound -Interfac
 "IP VanPhong : $IP_VANPHONG" | Out-File -FilePath $LOG_FILE -Append
 "IP BaoVe    : $IP_BAOVE" | Out-File -FilePath $LOG_FILE -Append
 "DOMAIN noi bo: $DOMAIN" | Out-File -FilePath $LOG_FILE -Append
-"Nguoi dung: $($USERS.Keys -join ', ') (mat khau: 123456)" | Out-File -FilePath $LOG_FILE -Append
+"Nguoi dung: $($USERS.Keys -join ', ') (mat khau: Adm!n2025)" | Out-File -FilePath $LOG_FILE -Append
 "Thong tin log tai: $LOG_FILE" | Out-File -FilePath $LOG_FILE -Append
 "=== HOAN TAT CAI DAT: $(Get-Date) ===" | Out-File -FilePath $LOG_FILE -Append
