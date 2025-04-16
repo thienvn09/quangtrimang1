@@ -1,14 +1,15 @@
 # ========================
 # Config Variables
 # ========================
-$InterfaceInternet = "Ethernet0"
-$InterfaceVanPhong = "Ethernet1"
-$InterfaceBaoVe    = "Ethernet2"
+$InterfaceInternet = "Ethernet"
+$InterfaceVanPhong = "Ethernet 2"
+$InterfaceBaoVe    = "Ethernet 3"
 
-$IPInternet = "192.168.100.10"
+$IPInternet = "10.0.2.10"
 $IPVanPhong = "192.168.10.10"
 $IPBaoVe    = "192.168.20.10"
 $Netmask    = 24
+$Gateway    = "10.0.2.2"
 $Domain     = "toanha.local"
 $DNSServer  = $IPInternet
 $LogFile    = "C:\setup_log.txt"
@@ -20,118 +21,158 @@ Start-Transcript -Path $LogFile -Force
 Write-Host "=== BAT DAU CAI DAT: $(Get-Date) ==="
 
 # ========================
-# IP Configuration
+# Kiem tra quyen Admin
 # ========================
-function Set-StaticIP {
-    param (
-        [string]$InterfaceAlias,
-        [string]$IPAddress
-    )
-
-    Write-Host "Configuring IP for $InterfaceAlias..."
-    New-NetIPAddress -InterfaceAlias $InterfaceAlias -IPAddress $IPAddress -PrefixLength $Netmask -DefaultGateway $IPAddress -ErrorAction Stop
-    Set-DnsClientServerAddress -InterfaceAlias $InterfaceAlias -ServerAddresses $DNSServer
+$isAdmin = ([Security.Principal.WindowsPrincipal] [Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+if (-not $isAdmin) {
+    Write-Host "Hay chay script voi quyen Administrator."
+    exit 1
 }
 
-Set-StaticIP -InterfaceAlias $InterfaceInternet -IPAddress $IPInternet
-Set-StaticIP -InterfaceAlias $InterfaceVanPhong  -IPAddress $IPVanPhong
-Set-StaticIP -InterfaceAlias $InterfaceBaoVe     -IPAddress $IPBaoVe
+# ========================
+# Kiem tra giao dien mang
+# ========================
+Write-Host "Kiem tra giao dien mang..."
+foreach ($iface in @($InterfaceInternet, $InterfaceVanPhong, $InterfaceBaoVe)) {
+    if (-not (Get-NetAdapter -Name $iface -ErrorAction SilentlyContinue)) {
+        Write-Host "Giao dien $iface khong ton tai."
+        exit 1
+    }
+}
 
 # ========================
-# Install DHCP and DNS
+# Gan IP tinh
 # ========================
-Write-Host "Installing DHCP and DNS roles..."
+Write-Host "Cau hinh IP tinh cho $InterfaceInternet..."
+New-NetIPAddress -InterfaceAlias $InterfaceInternet -IPAddress $IPInternet -PrefixLength $Netmask -DefaultGateway $Gateway -ErrorAction Stop
+Set-DnsClientServerAddress -InterfaceAlias $InterfaceInternet -ServerAddresses ($DNSServer, "8.8.8.8")
+
+Write-Host "Cau hinh IP tinh cho $InterfaceVanPhong..."
+New-NetIPAddress -InterfaceAlias $InterfaceVanPhong -IPAddress $IPVanPhong -PrefixLength $Netmask -ErrorAction Stop
+
+Write-Host "Cau hinh IP tinh cho $InterfaceBaoVe..."
+New-NetIPAddress -InterfaceAlias $InterfaceBaoVe -IPAddress $IPBaoVe -PrefixLength $Netmask -ErrorAction Stop
+
+# ========================
+# Cai DHCP va DNS
+# ========================
+Write-Host "Cai dat vai tro DHCP va DNS..."
 Install-WindowsFeature -Name DHCP -IncludeManagementTools
 Install-WindowsFeature -Name DNS -IncludeManagementTools
-
-# ========================
-# Configure DHCP Scopes
-# ========================
 Import-Module DHCPServer
 
-Add-DhcpServerv4Scope -Name "VanPhong" -StartRange 192.168.10.100 -EndRange 192.168.10.200 -SubnetMask 255.255.255.0
+# ========================
+# Tao Scope DHCP
+# ========================
+Write-Host "Tao scope DHCP tren dai 10.0.2.0/24..."
+Add-DhcpServerv4Scope -Name "InternetLAN" -StartRange 10.0.2.100 -EndRange 10.0.2.200 -SubnetMask 255.255.255.0
+Set-DhcpServerv4OptionValue -ScopeId 10.0.2.0 -Router $Gateway -DnsServer $DNSServer -DnsDomain $Domain
+
+Write-Host "Tao scope DHCP tren dai 192.168.10.0/24..."
+Add-DhcpServerv4Scope -Name "VanPhongLAN" -StartRange 192.168.10.100 -EndRange 192.168.10.200 -SubnetMask 255.255.255.0
 Set-DhcpServerv4OptionValue -ScopeId 192.168.10.0 -Router $IPVanPhong -DnsServer $DNSServer -DnsDomain $Domain
 
-Add-DhcpServerv4Scope -Name "BaoVe" -StartRange 192.168.20.100 -EndRange 192.168.20.200 -SubnetMask 255.255.255.0
+Write-Host "Tao scope DHCP tren dai 192.168.20.0/24..."
+Add-DhcpServerv4Scope -Name "BaoVeLAN" -StartRange 192.168.20.100 -EndRange 192.168.20.200 -SubnetMask 255.255.255.0
 Set-DhcpServerv4OptionValue -ScopeId 192.168.20.0 -Router $IPBaoVe -DnsServer $DNSServer -DnsDomain $Domain
 
 Restart-Service DHCPServer
 
 # ========================
-# DNS Setup (Simple Zone)
+# DNS Zone
 # ========================
+Write-Host "Cau hinh DNS zone $Domain..."
 Add-DnsServerPrimaryZone -Name $Domain -ZoneFile "$Domain.dns" -DynamicUpdate Secure
 Add-DnsServerResourceRecordA -Name "ns1" -ZoneName $Domain -IPv4Address $IPInternet
+Restart-Service DNS
 
 # ========================
-# Create Users & Groups
-# ========================
-$Groups = @("vanphong", "baove", "nhansu", "ketoan")
-foreach ($group in $Groups) {
-    if (-not (Get-ADGroup -Filter "Name -eq '$group'" -ErrorAction SilentlyContinue)) {
-        New-ADGroup -Name $group -GroupScope Global -PassThru
-    }
-}
-
-$Users = @{
-    LinhKeToan = "vanphong"
-    TaiNhanSu = "vanphong"
-    ThienBaoVe = "baove"
-    Nhanbaove = "baove"
-    Nhannhansu = "nhansu"
-    BaoKeToan = "ketoan"
-}
-
-foreach ($user in $Users.Keys) {
-    if (-not (Get-ADUser -Filter "SamAccountName -eq '$user'" -ErrorAction SilentlyContinue)) {
-        $pass = ConvertTo-SecureString "123456" -AsPlainText -Force
-        New-ADUser -Name $user -AccountPassword $pass -Enabled $true -PasswordNeverExpires $true
-        Add-ADGroupMember -Identity $Users[$user] -Members $user
-    }
-}
-
-# ========================
-# Create Share Folders
-# ========================
-$SharePaths = @{
-    VanPhong = "C:\Share\vanphong"
-    BaoVe = "C:\Share\baove"
-    NhanSu = "C:\Share\nhansu"
-    KeToan = "C:\Share\ketoan"
-}
-
-foreach ($share in $SharePaths.Keys) {
-    $path = $SharePaths[$share]
-    New-Item -ItemType Directory -Path $path -Force | Out-Null
-    $group = $share.ToLower()
-    $acl = Get-Acl $path
-    $rule = New-Object System.Security.AccessControl.FileSystemAccessRule("$group", "FullControl", "ContainerInherit,ObjectInherit", "None", "Allow")
-    $acl.SetAccessRule($rule)
-    Set-Acl $path $acl
-    New-SmbShare -Name $share -Path $path -FullAccess "$group"
-}
-
-# ========================
-# Enable IP Forwarding
+# Bat IP Forwarding
 # ========================
 Set-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Services\Tcpip\Parameters" -Name "IPEnableRouter" -Value 1
 
 # ========================
-# Firewall Configuration
+# Cai dat NFS Server
 # ========================
-Write-Host "Configuring Windows Firewall..."
-New-NetFirewallRule -DisplayName "Allow DHCP Server" -Direction Inbound -Protocol UDP -LocalPort 67 -Action Allow
-New-NetFirewallRule -DisplayName "Allow DNS" -Direction Inbound -Protocol UDP -LocalPort 53 -Action Allow
-New-NetFirewallRule -DisplayName "Allow SMB" -Direction Inbound -Protocol TCP -LocalPort 445 -Action Allow
+Write-Host "Cai dat vai tro NFS Server..."
+Install-WindowsFeature -Name FS-NFS-Service -IncludeManagementTools
+
+# Tao nhom
+$Groups = @("vanphong", "baove", "nhansu", "ketoan")
+foreach ($group in $Groups) {
+    if (-not (Get-LocalGroup -Name $group -ErrorAction SilentlyContinue)) {
+        New-LocalGroup -Name $group -Description "Nhom truy cap thu muc $group"
+    }
+}
+
+# Tao thu muc chia se
+$ShareBase = "C:\Share"
+$SharePaths = @{
+    vanphong = "$ShareBase\vanphong"
+    baove    = "$ShareBase\baove"
+    nhansu   = "$ShareBase\nhansu"
+    ketoan   = "$ShareBase\ketoan"
+}
+
+foreach ($key in $SharePaths.Keys) {
+    $path = $SharePaths[$key]
+
+    # Tao thu muc
+    New-Item -Path $path -ItemType Directory -Force | Out-Null
+
+    # Gan quyen NTFS cho nhom
+    $acl = Get-Acl $path
+    $acl.SetAccessRuleProtection($true, $false) # Disable inheritance
+    $rule = New-Object System.Security.AccessControl.FileSystemAccessRule(
+        $key, "Modify", "ContainerInherit,ObjectInherit", "None", "Allow"
+    )
+    $acl.AddAccessRule($rule)
+    Set-Acl -Path $path -AclObject $acl
+
+    # Chia se qua NFS
+    if (-not (Get-NfsShare -Name $key -ErrorAction SilentlyContinue)) {
+        New-NfsShare -Name $key -Path $path -Permission ReadWrite -AllowAnonymousAccess $false -Authentication "sys" -EnableUnmappedUserAccess $false
+        Grant-NfsSharePermission -Name $key -ClientName "ALL MACHINES" -ClientType "host" -Permission "ReadWrite" -AllowRootAccess $false
+    }
+}
+
+# Tao nguoi dung va gan vao nhom
+Write-Host "Tao nguoi dung va gan nhom..."
+$Users = @{
+    LinhKeToan  = "vanphong"
+    TaiNhanSu   = "vanphong"
+    ThienBaoVe  = "baove"
+    Nhanbaove   = "baove"
+    Nhannhansu  = "nhansu"
+    BaoKeToan   = "ketoan"
+}
+
+foreach ($user in $Users.Keys) {
+    if (-not (Get-LocalUser -Name $user -ErrorAction SilentlyContinue)) {
+        $pass = ConvertTo-SecureString "123456" -AsPlainText -Force
+        New-LocalUser -Name $user -Password $pass -FullName $user -Description "Nguoi dung $user"
+        Add-LocalGroupMember -Group $Users[$user] -Member $user
+    }
+}
 
 # ========================
-# Done
+# Cau hinh Firewall
+# ========================
+Write-Host "Cau hinh firewall..."
+New-NetFirewallRule -DisplayName "Allow DHCP Server" -Direction Inbound -Protocol UDP -LocalPort 67 -Action Allow
+New-NetFirewallRule -DisplayName "Allow DNS" -Direction Inbound -Protocol UDP -LocalPort 53 -Action Allow
+New-NetFirewallRule -DisplayName "Allow NFS" -Direction Inbound -Protocol TCP -LocalPort 2049 -Action Allow
+New-NetFirewallRule -DisplayName "Allow NFS Mount" -Direction Inbound -Protocol TCP -LocalPort 111 -Action Allow
+
+# ========================
+# DONE
 # ========================
 Write-Host "==== CAI DAT HOAN TAT ===="
-Write-Host "IP Internet : $IPInternet"
-Write-Host "IP VanPhong : $IPVanPhong"
-Write-Host "IP BaoVe    : $IPBaoVe"
-Write-Host "DOMAIN      : $Domain"
-Write-Host "Nguoi dung  : $($Users.Keys -join ', ') (mat khau: 123456)"
-Write-Host "Thong tin log tai: $LogFile"
+Write-Host "IP Internet    : $IPInternet"
+Write-Host "IP VanPhong    : $IPVanPhong"
+Write-Host "IP BaoVe       : $IPBaoVe"
+Write-Host "DHCP Pham vi   : 10.0.2.100 - 10.0.2.200, 192.168.10.100 - 192.168.10.200, 192.168.20.100 - 192.168.20.200"
+Write-Host "Domain noi bo  : $Domain"
+Write-Host "Nguoi dung     : $($Users.Keys -join ', ') (mat khau: 123456)"
+Write-Host "Thong tin log  : $LogFile"
 Stop-Transcript
