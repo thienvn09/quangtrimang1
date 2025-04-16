@@ -120,7 +120,6 @@ $SHARE_ACLS = @{
 }
 foreach ($path in $SHARE_ACLS.Keys) {
     $group = $SHARE_ACLS[$path]
-    # Sửa lỗi cú pháp icacls: thay "${$group}" thành "$group"
     icacls $path /grant "$group:(OI)(CI)F" /T | Out-Null
 }
 
