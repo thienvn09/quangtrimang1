@@ -1,175 +1,231 @@
-#Requires -RunAsAdministrator
+# PowerShell script to configure Windows Server with network, DHCP, DNS, file sharing, and firewall
+# Equivalent to the provided Linux Bash script, optimized for Windows Server
 
-# ========================
-# Biến cấu hình
-# ========================
-$INTERFACE_INTERNET = "Ethernet"
-$INTERFACE_VANPHONG = "Ethernet 2"
-$INTERFACE_BAOVE = "Ethernet 3"
-$IP_INTERNET = "192.168.100.10"
-$IP_VANPHONG = "192.168.10.10"
-$IP_BAOVE = "192.168.20.10"
-$NETMASK = "255.255.255.0"
-$DOMAIN = "toanha.local"
-$DNS_SERVER = $IP_INTERNET
-$LOG_FILE = "C:\setup_log.txt"
-
-# ========================
-# Kiểm tra quyền Administrator
-# ========================
-if (-not ([Security.Principal.WindowsPrincipal] [Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
-    Write-Host "Hay chay script voi quyen Administrator."
+# Ensure script runs with elevated privileges
+$isAdmin = ([Security.Principal.WindowsPrincipal] [Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+if (-not $isAdmin) {
+    Write-Error "Please run this script as an Administrator."
     exit 1
 }
 
-# ========================
-# Tạo file log
-# ========================
-"=== BAT DAU CAI DAT: $(Get-Date) ===" | Out-File -FilePath $LOG_FILE -Append
+# Configuration Variables
+$InterfaceInternet = "Ethernet0"  # Adjust to match actual adapter name
+$InterfaceVanPhong = "Ethernet1"
+$InterfaceBaoVe = "Ethernet2"
+$IPInternet = "192.168.100.10"
+$IPVanPhong = "192.168.10.10"
+$IPBaoVe = "192.168.20.10"
+$Netmask = "255.255.255.0"
+$PrefixLength = 24
+$Domain = "toanha.local"
+$DNSServer = $IPInternet
+$LogFile = "C:\Setup_Log.txt"
 
-# ========================
-# Kiểm tra giao diện mạng
-# ========================
-"==== Kiem tra giao dien mang ====" | Out-File -FilePath $LOG_FILE -Append
-foreach ($iface in @($INTERFACE_INTERNET, $INTERFACE_VANPHONG, $INTERFACE_BAOVE)) {
-    $adapter = Get-NetAdapter -Name $iface -ErrorAction SilentlyContinue
-    if (-not $adapter) {
-        "Giao dien $iface khong ton tai." | Out-File -FilePath $LOG_FILE -Append
+# Initialize Log File
+"=== START SETUP: $(Get-Date) ===" | Out-File -FilePath $LogFile -Encoding UTF8
+
+# Function to Log Messages
+function Write-Log {
+    param($Message)
+    $Message | Out-File -FilePath $LogFile -Append -Encoding UTF8
+    Write-Host $Message
+}
+
+# Check Network Interfaces
+Write-Log "==== Checking Network Interfaces ===="
+foreach ($iface in @($InterfaceInternet, $InterfaceVanPhong, $InterfaceBaoVe)) {
+    if (-not (Get-NetAdapter -Name $iface -ErrorAction SilentlyContinue)) {
+        Write-Log "Interface $iface does not exist."
         exit 1
     }
-    if ($adapter.Status -ne "Up") {
-        "Giao dien $iface khong hoat dong (Media disconnected). Vui long kiem tra ket noi mang." | Out-File -FilePath $LOG_FILE -Append
-        exit 1
+}
+
+# Configure Static IPs
+Write-Log "==== Configuring Static IPs ===="
+try {
+    # Internet Interface
+    New-NetIPAddress -InterfaceAlias $InterfaceInternet -IPAddress $IPInternet -PrefixLength $PrefixLength -DefaultGateway "192.168.100.1" -ErrorAction Stop | Out-Null
+    Set-DnsClientServerAddress -InterfaceAlias $InterfaceInternet -ServerAddresses ("8.8.8.8", "1.1.1.1") -ErrorAction Stop
+
+    # VanPhong Interface
+    New-NetIPAddress -InterfaceAlias $InterfaceVanPhong -IPAddress $IPVanPhong -PrefixLength $PrefixLength -ErrorAction Stop | Out-Null
+
+    # BaoVe Interface
+    New-NetIPAddress -InterfaceAlias $InterfaceBaoVe -IPAddress $IPBaoVe -PrefixLength $PrefixLength -ErrorAction Stop | Out-Null
+
+    Write-Log "Network interfaces configured successfully."
+}
+catch {
+    Write-Log "Error configuring network interfaces: $_"
+    exit 1
+}
+
+# Install and Configure Windows Features
+Write-Log "==== Installing Required Features ===="
+$features = @("DHCP", "DNS", "FS-FileServer", "FS-SMB1")
+foreach ($feature in $features) {
+    if (-not (Get-WindowsFeature -Name $feature).Installed) {
+        Install-WindowsFeature -Name $feature -IncludeManagementTools -ErrorAction Stop | Out-Null
+        Write-Log "Installed feature: $feature"
     }
 }
 
-# ========================
-# Cấu hình IP tĩnh
-# ========================
-"==== Cau hinh IP tinh ====" | Out-File -FilePath $LOG_FILE -Append
+# Configure DHCP Server
+Write-Log "==== Configuring DHCP Server ===="
+try {
+    # Authorize DHCP Server
+    Add-DhcpServerInDC -DnsName $env:COMPUTERNAME -IPAddress $IPInternet -ErrorAction Stop
 
-# Xóa cấu hình IP cũ (nếu có) trước khi gán IP mới
-Get-NetIPAddress -InterfaceAlias $INTERFACE_INTERNET -ErrorAction SilentlyContinue | Where-Object { $_.IPAddress -eq $IP_INTERNET } | Remove-NetIPAddress -Confirm:$false -ErrorAction SilentlyContinue
-Get-NetIPAddress -InterfaceAlias $INTERFACE_VANPHONG -ErrorAction SilentlyContinue | Where-Object { $_.IPAddress -eq $IP_VANPHONG } | Remove-NetIPAddress -Confirm:$false -ErrorAction SilentlyContinue
-Get-NetIPAddress -InterfaceAlias $INTERFACE_BAOVE -ErrorAction SilentlyContinue | Where-Object { $_.IPAddress -eq $IP_BAOVE } | Remove-NetIPAddress -Confirm:$false -ErrorAction SilentlyContinue
+    # VanPhong Scope
+    Add-DhcpServerv4Scope -Name "VanPhong" -StartRange "192.168.10.100" -EndRange "192.168.10.200" -SubnetMask $Netmask -State Active -ErrorAction Stop
+    Set-DhcpServerv4OptionValue -ScopeId "192.168.10.0" -Router $IPVanPhong -DnsServer $DNSServer -DnsDomain $Domain -ErrorAction Stop
 
-# Gán IP mới
-New-NetIPAddress -InterfaceAlias $INTERFACE_INTERNET -IPAddress $IP_INTERNET -PrefixLength 24 -DefaultGateway $IP_INTERNET -ErrorAction Stop | Out-File -FilePath $LOG_FILE -Append
-Set-DnsClientServerAddress -InterfaceAlias $INTERFACE_INTERNET -ServerAddresses ("8.8.8.8", "1.1.1.1") -ErrorAction Stop | Out-File -FilePath $LOG_FILE -Append
+    # BaoVe Scope
+    Add-DhcpServerv4Scope -Name "BaoVe" -StartRange "192.168.20.100" -EndRange "192.168.20.200" -SubnetMask $Netmask -State Active -ErrorAction Stop
+    Set-DhcpServerv4OptionValue -ScopeId "192.168.20.0" -Router $IPBaoVe -DnsServer $DNSServer -DnsDomain $Domain -ErrorAction Stop
 
-New-NetIPAddress -InterfaceAlias $INTERFACE_VANPHONG -IPAddress $IP_VANPHONG -PrefixLength 24 -ErrorAction Stop | Out-File -FilePath $LOG_FILE -Append
-Set-DnsClientServerAddress -InterfaceAlias $INTERFACE_VANPHONG -ServerAddresses $DNS_SERVER -ErrorAction Stop | Out-File -FilePath $LOG_FILE -Append
+    # Bind DHCP to specific interfaces
+    Set-DhcpServerv4Binding -InterfaceAlias $InterfaceVanPhong -BindingState $true -ErrorAction Stop
+    Set-DhcpServerv4Binding -InterfaceAlias $InterfaceBaoVe -BindingState $true -ErrorAction Stop
+    Set-DhcpServerv4Binding -InterfaceAlias $InterfaceInternet -BindingState $false -ErrorAction Stop
 
-New-NetIPAddress -InterfaceAlias $INTERFACE_BAOVE -IPAddress $IP_BAOVE -PrefixLength 24 -ErrorAction Stop | Out-File -FilePath $LOG_FILE -Append
-Set-DnsClientServerAddress -InterfaceAlias $INTERFACE_BAOVE -ServerAddresses $DNS_SERVER -ErrorAction Stop | Out-File -FilePath $LOG_FILE -Append
-
-"IP tĩnh đã được áp dụng." | Out-File -FilePath $LOG_FILE -Append
-
-# ========================
-# Cài đặt và cấu hình DHCP Server
-# ========================
-"==== Cai dat DHCP Server ====" | Out-File -FilePath $LOG_FILE -Append
-
-Install-WindowsFeature -Name DHCP -IncludeManagementTools -ErrorAction Stop | Out-File -FilePath $LOG_FILE -Append
-
-Add-DhcpServerv4Scope -Name "VanPhong" -StartRange "192.168.10.100" -EndRange "192.168.10.200" -SubnetMask $NETMASK -State Active -ErrorAction Stop
-Set-DhcpServerv4OptionValue -ScopeId "192.168.10.0" -Router $IP_VANPHONG -DnsServer $DNS_SERVER -DnsDomain $DOMAIN -ErrorAction Stop
-
-Add-DhcpServerv4Scope -Name "BaoVe" -StartRange "192.168.20.100" -EndRange "192.168.20.200" -SubnetMask $NETMASK -State Active -ErrorAction Stop
-Set-DhcpServerv4OptionValue -ScopeId "192.168.20.0" -Router $IP_BAOVE -DnsServer $DNS_SERVER -DnsDomain $DOMAIN -ErrorAction Stop
-
-Restart-Service -Name DHCPServer -ErrorAction Stop
-"DHCP Server da duoc cai dat va chay." | Out-File -FilePath $LOG_FILE -Append
-
-# ========================
-# Cài đặt DNS Server
-# ========================
-"==== Cai dat DNS Server ====" | Out-File -FilePath $LOG_FILE -Append
-
-Install-WindowsFeature -Name DNS -IncludeManagementTools -ErrorAction Stop | Out-File -FilePath $LOG_FILE -Append
-
-Add-DnsServerPrimaryZone -Name $DOMAIN -ZoneFile "$DOMAIN.dns" -ErrorAction Stop
-Add-DnsServerResourceRecordA -ZoneName $DOMAIN -Name "ns1" -IPv4Address $IP_INTERNET -ErrorAction Stop
-Add-DnsServerResourceRecordA -ZoneName $DOMAIN -Name "@" -IPv4Address $IP_INTERNET -ErrorAction Stop
-Add-DnsServerForwarder -IPAddress "8.8.8.8", "1.1.1.1" -ErrorAction Stop
-
-"DNS Server da duoc cau hinh dung va chay." | Out-File -FilePath $LOG_FILE -Append
-
-# ========================
-# Cài đặt và cấu hình chia sẻ file (SMB thay cho Samba)
-# ========================
-"==== Cai dat File Sharing ====" | Out-File -FilePath $LOG_FILE -Append
-
-Install-WindowsFeature -Name FS-FileServer -ErrorAction Stop | Out-File -FilePath $LOG_FILE -Append
-
-$SHARE_PATHS = @("C:\srv\share\vanphong", "C:\srv\share\baove", "C:\srv\share\nhansu", "C:\srv\share\ketoan")
-foreach ($path in $SHARE_PATHS) {
-    New-Item -Path $path -ItemType Directory -Force | Out-Null
+    Restart-Service -Name DHCPServer -ErrorAction Stop
+    Write-Log "DHCP Server configured and started."
+}
+catch {
+    Write-Log "Error configuring DHCP Server: $_"
+    exit 1
 }
 
-$Groups = @("vanphong", "baove", "nhansu", "ketoan")
-foreach ($group in $Groups) {
-    New-LocalGroup -Name $group -ErrorAction SilentlyContinue
+# Configure DNS Server
+Write-Log "==== Configuring DNS Server ===="
+try {
+    # Create Primary Zone
+    Add-DnsServerPrimaryZone -Name $Domain -ZoneFile "db.$Domain" -ErrorAction Stop
+
+    # Add DNS Records
+    Add-DnsServerResourceRecordA -ZoneName $Domain -Name "@" -IPv4Address $IPInternet -ErrorAction Stop
+    Add-DnsServerResourceRecordA -ZoneName $Domain -Name "ns1" -IPv4Address $IPInternet -ErrorAction Stop
+    Add-DnsServerResourceRecord -ZoneName $Domain -Type SOA -Name "@" -SOA -PrimaryServer "ns1.$Domain" -ResponsiblePerson "admin.$Domain" -SerialNumber 3 -Refresh 604800 -Retry 86400 -Expire 2419200 -DefaultTtl 604800 -ErrorAction Stop
+
+    # Configure Forwarders
+    Set-DnsServerForwarder -IPAddress ("8.8.8.8", "1.1.1.1") -ErrorAction Stop
+
+    # Allow Recursion
+    Set-DnsServerRecursion -Enable $true -ErrorAction Stop
+
+    Restart-Service -Name DNS -ErrorAction Stop
+    Write-Log "DNS Server configured and started."
+}
+catch {
+    Write-Log "Error configuring DNS Server: $_"
+    exit 1
 }
 
-$SHARE_ACLS = @{
-    "C:\srv\share\vanphong" = "vanphong"
-    "C:\srv\share\baove" = "baove"
-    "C:\srv\share\nhansu" = "nhansu"
-    "C:\srv\share\ketoan" = "ketoan"
+# Configure File Sharing (Samba Equivalent)
+Write-Log "==== Configuring File Sharing ===="
+try {
+    # Create Groups
+    $groups = @("vanphong", "baove", "nhansu", "ketoan")
+    foreach ($group in $groups) {
+        if (-not (Get-LocalGroup -Name $group -ErrorAction SilentlyContinue)) {
+            New-LocalGroup -Name $group -Description "Group for $group access" -ErrorAction Stop
+            Write-Log "Created group: $group"
+        }
+    }
+
+    # Create Share Directories
+    $shareBase = "C:\Shares"
+    $shares = @("vanphong", "baove", "nhansu", "ketoan")
+    foreach ($share in $shares) {
+        $path = Join-Path $shareBase $share
+        New-Item -Path $path -ItemType Directory -Force -ErrorAction Stop | Out-Null
+
+        # Set NTFS Permissions
+        $acl = Get-Acl -Path $path
+        $acl.SetAccessRuleProtection($true, $false) # Disable inheritance
+        $rule = New-Object System.Security.AccessControl.FileSystemAccessRule(
+            $share, "Modify", "ContainerInherit,ObjectInherit", "None", "Allow")
+        $acl.AddAccessRule($rule)
+        Set-Acl -Path $path -AclObject $acl -ErrorAction Stop
+
+        # Create SMB Share
+        New-SmbShare -Name $share -Path $path -FullAccess "$env:COMPUTERNAME\$share" -ErrorAction Stop
+        Write-Log "Created share: $share at $path"
+    }
+
+    # Create Users and Assign to Groups
+    $users = @{
+        "LinhKeToan" = "vanphong"
+        "TaiNhanSu" = "vanphong"
+        "ThienBaoVe" = "baove"
+        "Nhanbaove" = "baove"
+        "Nhannhansu" = "nhansu"
+        "BaoKeToan" = "ketoan"
+    }
+
+    foreach ($user in $users.Keys) {
+        if (-not (Get-LocalUser -Name $user -ErrorAction SilentlyContinue)) {
+            $securePassword = ConvertTo-SecureString "123456" -AsPlainText -Force
+            New-LocalUser -Name $user -Password $securePassword -FullName $user -Description "User $user" -ErrorAction Stop
+            Add-LocalGroupMember -Group $users[$user] -Member $user -ErrorAction Stop
+            Write-Log "Created user $user and added to group $($users[$user])."
+        }
+    }
+
+    Restart-Service -Name LanmanServer -ErrorAction Stop
+    Write-Log "File sharing configured and SMB service restarted."
 }
-foreach ($path in $SHARE_ACLS.Keys) {
-    $group = $SHARE_ACLS[$path]
-    icacls $path /grant "$group:(OI)(CI)F" /T | Out-Null
+catch {
+    Write-Log "Error configuring file sharing: $_"
+    exit 1
 }
 
-$USERS = @{
-    "LinhKeToan" = "vanphong"
-    "TaiNhanSu" = "vanphong"
-    "ThienBaoVe" = "baove"
-    "Nhanbaove" = "baove"
-    "Nhannhansu" = "nhansu"
-    "BaoKeToan" = "ketoan"
+# Configure IP Forwarding and Firewall
+Write-Log "==== Configuring IP Forwarding and Firewall ===="
+try {
+    # Enable IP Forwarding
+    Set-NetIPInterface -Forwarding Enabled -ErrorAction Stop
+    Write-Log "IP Forwarding enabled."
+
+    # Configure Firewall Rules
+    $firewallRules = @(
+        @{Name="Allow DHCP"; Protocol="UDP"; LocalPort=67; Action="Allow"},
+        @{Name="Allow DNS"; Protocol="TCP,UDP"; LocalPort=53; Action="Allow"},
+        @{Name="Allow SMB"; Protocol="TCP"; LocalPort=445; Action="Allow"},
+        @{Name="Allow Internet Interface"; InterfaceAlias=$InterfaceInternet; Action="Allow"},
+        @{Name="Allow VanPhong Interface"; InterfaceAlias=$InterfaceVanPhong; Action="Allow"},
+        @{Name="Allow BaoVe Interface"; InterfaceAlias=$InterfaceBaoVe; Action="Allow"}
+    )
+
+    foreach ($rule in $firewallRules) {
+        $params = @{
+            DisplayName = $rule.Name
+            Direction = "Inbound"
+            Action = $rule.Action
+        }
+        if ($rule.Protocol) { $params.Protocol = $rule.Protocol }
+        if ($rule.LocalPort) { $params.LocalPort = $rule.LocalPort }
+        if ($rule.InterfaceAlias) { $params.InterfaceAlias = $rule.InterfaceAlias }
+        New-NetFirewallRule @params -ErrorAction Stop | Out-Null
+        Write-Log "Created firewall rule: $($rule.Name)"
+    }
+
+    # Enable Firewall
+    Set-NetFirewallProfile -Profile Domain,Public,Private -Enabled True -ErrorAction Stop
+    Write-Log "Firewall configured and enabled."
+}
+catch {
+    Write-Log "Error configuring IP forwarding or firewall: $_"
+    exit 1
 }
 
-foreach ($user in $USERS.Keys) {
-    $group = $USERS[$user]
-    $password = ConvertTo-SecureString "Adm!n2025" -AsPlainText -Force
-    New-LocalUser -Name $user -Password $password -PasswordNeverExpires -AccountNeverExpires -ErrorAction SilentlyContinue
-    Add-LocalGroupMember -Group $group -Member $user -ErrorAction SilentlyContinue
-}
-
-foreach ($path in $SHARE_ACLS.Keys) {
-    $shareName = Split-Path $path -Leaf
-    $group = $SHARE_ACLS[$path]
-    New-SmbShare -Name $shareName -Path $path -FullAccess $group -ErrorAction Stop
-}
-
-"File Sharing da duoc cau hinh dung cach." | Out-File -FilePath $LOG_FILE -Append
-
-# ========================
-# Cấu hình IP Forwarding và Firewall
-# ========================
-"==== Cau hinh IP Forward va Firewall ====" | Out-File -FilePath $LOG_FILE -Append
-
-Install-WindowsFeature -Name Routing -IncludeManagementTools -ErrorAction Stop
-Start-Service RemoteAccess -ErrorAction Stop
-$rrasConfig = "netsh routing ip nat install; netsh routing ip nat add interface $($INTERFACE_INTERNET); netsh routing ip nat add interface $($INTERFACE_VANPHONG); netsh routing ip nat add interface $($INTERFACE_BAOVE)"
-Invoke-Expression $rrasConfig | Out-File -FilePath $LOG_FILE -Append
-
-New-NetFirewallRule -DisplayName "Allow DHCP" -Direction Inbound -Protocol UDP -LocalPort 67 -Action Allow -ErrorAction Stop
-New-NetFirewallRule -DisplayName "Allow DNS" -Direction Inbound -Protocol UDP -LocalPort 53 -Action Allow -ErrorAction Stop
-New-NetFirewallRule -DisplayName "Allow SMB" -Direction Inbound -Protocol TCP -LocalPort 445 -Action Allow -ErrorAction Stop
-New-NetFirewallRule -DisplayName "Allow Interfaces" -Direction Inbound -InterfaceAlias $INTERFACE_INTERNET, $INTERFACE_VANPHONG, $INTERFACE_BAOVE -Action Allow -ErrorAction Stop
-
-# ========================
-# Hoàn tất
-# ========================
-"==== CAI DAT HOAN TAT ====" | Out-File -FilePath $LOG_FILE -Append
-"IP Internet : $IP_INTERNET" | Out-File -FilePath $LOG_FILE -Append
-"IP VanPhong : $IP_VANPHONG" | Out-File -FilePath $LOG_FILE -Append
-"IP BaoVe    : $IP_BAOVE" | Out-File -FilePath $LOG_FILE -Append
-"DOMAIN noi bo: $DOMAIN" | Out-File -FilePath $LOG_FILE -Append
-"Nguoi dung: $($USERS.Keys -join ', ') (mat khau: Adm!n2025)" | Out-File -FilePath $LOG_FILE -Append
-"Thong tin log tai: $LOG_FILE" | Out-File -FilePath $LOG_FILE -Append
-"=== HOAN TAT CAI DAT: $(Get-Date) ===" | Out-File -FilePath $LOG_FILE -Append
+# Finalize Setup
+Write-Log "==== SETUP COMPLETED ===="
+Write-Log "IP Internet : $IPInternet"
+Write-Log "IP VanPhong : $IPVanPhong"
+Write-Log "IP BaoVe    : $IPBaoVe"
+Write-Log "Domain      : $Domain"
+Write-Log "Users       : $($users.Keys -join ', ') (Password: 123456)"
+Write-Log "Log File    : $LogFile"
+Write-Log "=== SETUP FINISHED: $(Get-Date) ==="
