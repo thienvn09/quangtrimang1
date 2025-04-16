@@ -44,25 +44,61 @@ foreach ($iface in @($InterfaceInternet, $InterfaceVanPhong, $InterfaceBaoVe)) {
 # Gan IP tinh
 # ========================
 Write-Host "Cau hinh IP tinh cho $InterfaceInternet..."
+# Kiem tra trang thai giao dien
+$adapter = Get-NetAdapter -Name $InterfaceInternet -ErrorAction Stop
+if (-not $adapter.Status -eq "Up") {
+    Write-Host "Giao dien $InterfaceInternet dang khong hoat dong. Dang bat lai..."
+    Enable-NetAdapter -Name $InterfaceInternet -Confirm:$false -ErrorAction Stop
+    Start-Sleep -Seconds 5  # Cho 5 giay de giao dien san sang
+}
+
 # Tat DHCP tren giao dien
 Set-NetIPInterface -InterfaceAlias $InterfaceInternet -Dhcp Disabled -ErrorAction SilentlyContinue
 # Xoa tat ca IP cu (IPv4 va IPv6) neu co
 Get-NetIPAddress -InterfaceAlias $InterfaceInternet -ErrorAction SilentlyContinue | Remove-NetIPAddress -Confirm:$false -ErrorAction SilentlyContinue
+Start-Sleep -Seconds 2  # Cho 2 giay de dam bao IP duoc xoa
+# Gan IP moi
 New-NetIPAddress -InterfaceAlias $InterfaceInternet -IPAddress $IPInternet -PrefixLength $Netmask -DefaultGateway $Gateway -ErrorAction Stop
 Set-DnsClientServerAddress -InterfaceAlias $InterfaceInternet -ServerAddresses ($DNSServer, "8.8.8.8")
 
+# Kiem tra ket noi
+Write-Host "Kiem tra ket noi sau khi gan IP..."
+if (Test-Connection 8.8.8.8 -Count 2 -Quiet) {
+    Write-Host "Ket noi Internet thanh cong."
+} else {
+    Write-Host "Khong the ket noi Internet. Kiem tra lai gateway hoac cau hinh mang."
+}
+
 Write-Host "Cau hinh IP tinh cho $InterfaceVanPhong..."
+# Kiem tra trang thai giao dien
+$adapter = Get-NetAdapter -Name $InterfaceVanPhong -ErrorAction Stop
+if (-not $adapter.Status -eq "Up") {
+    Write-Host "Giao dien $InterfaceVanPhong dang khong hoat dong. Dang bat lai..."
+    Enable-NetAdapter -Name $InterfaceVanPhong -Confirm:$false -ErrorAction Stop
+    Start-Sleep -Seconds 5
+}
+
 # Tat DHCP tren giao dien
 Set-NetIPInterface -InterfaceAlias $InterfaceVanPhong -Dhcp Disabled -ErrorAction SilentlyContinue
 # Xoa tat ca IP cu neu co
 Get-NetIPAddress -InterfaceAlias $InterfaceVanPhong -ErrorAction SilentlyContinue | Remove-NetIPAddress -Confirm:$false -ErrorAction SilentlyContinue
+Start-Sleep -Seconds 2
 New-NetIPAddress -InterfaceAlias $InterfaceVanPhong -IPAddress $IPVanPhong -PrefixLength $Netmask -ErrorAction Stop
 
 Write-Host "Cau hinh IP tinh cho $InterfaceBaoVe..."
+# Kiem tra trang thai giao dien
+$adapter = Get-NetAdapter -Name $InterfaceBaoVe -ErrorAction Stop
+if (-not $adapter.Status -eq "Up") {
+    Write-Host "Giao dien $InterfaceBaoVe dang khong hoat dong. Dang bat lai..."
+    Enable-NetAdapter -Name $InterfaceBaoVe -Confirm:$false -ErrorAction Stop
+    Start-Sleep -Seconds 5
+}
+
 # Tat DHCP tren giao dien
 Set-NetIPInterface -InterfaceAlias $InterfaceBaoVe -Dhcp Disabled -ErrorAction SilentlyContinue
 # Xoa tat ca IP cu neu co
 Get-NetIPAddress -InterfaceAlias $InterfaceBaoVe -ErrorAction SilentlyContinue | Remove-NetIPAddress -Confirm:$false -ErrorAction SilentlyContinue
+Start-Sleep -Seconds 2
 New-NetIPAddress -InterfaceAlias $InterfaceBaoVe -IPAddress $IPBaoVe -PrefixLength $Netmask -ErrorAction Stop
 
 # ========================
