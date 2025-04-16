@@ -60,14 +60,6 @@ Set-DnsClientServerAddress -InterfaceAlias $INTERFACE_BAOVE -ServerAddresses $DN
 "IP tĩnh đã được áp dụng." | Out-File -FilePath $LOG_FILE -Append
 
 # ========================
-# Cap nhat he thong (Windows Update)
-# ========================
-"==== Cap nhat he thong ====" | Out-File -FilePath $LOG_FILE -Append
-Install-Module -Name PSWindowsUpdate -Force -Confirm:$false
-Import-Module -Name PSWindowsUpdate
-Get-WindowsUpdate -Install -AcceptAll -AutoReboot:$false | Out-File -FilePath $LOG_FILE -Append
-
-# ========================
 # Cai dat DHCP Server
 # ========================
 "==== Cai dat DHCP Server ====" | Out-File -FilePath $LOG_FILE -Append
@@ -112,7 +104,7 @@ $users = @{
 }
 
 foreach ($user in $users.Keys) {
-    net user $user "123456" /add /y
+    net user $user "Ad@min2025" /add /y
     Add-LocalGroupMember -Group $users[$user] -Member $user
 }
 
@@ -143,6 +135,6 @@ Enable-NetFirewallRule -DisplayGroup "File and Printer Sharing"
 "IP VanPhong : $IP_VANPHONG" | Out-File -FilePath $LOG_FILE -Append
 "IP BaoVe    : $IP_BAOVE" | Out-File -FilePath $LOG_FILE -Append
 "DOMAIN noi bo: $DOMAIN" | Out-File -FilePath $LOG_FILE -Append
-"Nguoi dung: $($users.Keys -join ', ') (mat khau: 123456)" | Out-File -FilePath $LOG_FILE -Append
+"Nguoi dung: $($users.Keys -join ', ') (mat khau: Ad@min2025)" | Out-File -FilePath $LOG_FILE -Append
 "Log tai: $LOG_FILE" | Out-File -FilePath $LOG_FILE -Append
 "=== HOAN TAT: $(Get-Date) ===" | Out-File -FilePath $LOG_FILE -Append
