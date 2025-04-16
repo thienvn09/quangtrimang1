@@ -1,5 +1,5 @@
 # PowerShell script to configure Windows Server with network, DHCP, DNS, file sharing, and firewall
-# Equivalent to the provided Linux Bash script, optimized for Windows Server
+# Updated to handle existing IP addresses and match interface names from the screenshot
 
 # Ensure script runs with elevated privileges
 $isAdmin = ([Security.Principal.WindowsPrincipal] [Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
@@ -9,9 +9,9 @@ if (-not $isAdmin) {
 }
 
 # Configuration Variables
-$InterfaceInternet = "Ethernet0"  # Adjust to match actual adapter name
-$InterfaceVanPhong = "Ethernet1"
-$InterfaceBaoVe = "Ethernet2"
+$InterfaceInternet = "Ethernet"  # Updated to match screenshot
+$InterfaceVanPhong = "Ethernet 2"
+$InterfaceBaoVe = "Ethernet 3"
 $IPInternet = "192.168.100.10"
 $IPVanPhong = "192.168.10.10"
 $IPBaoVe = "192.168.20.10"
@@ -43,15 +43,44 @@ foreach ($iface in @($InterfaceInternet, $InterfaceVanPhong, $InterfaceBaoVe)) {
 # Configure Static IPs
 Write-Log "==== Configuring Static IPs ===="
 try {
+    # Function to configure IP if not already set
+    function Set-InterfaceIP {
+        param ($InterfaceAlias, $IPAddress, $PrefixLength, $DefaultGateway = $null, $DnsServers = $null)
+
+        $currentIP = Get-NetIPAddress -InterfaceAlias $InterfaceAlias -AddressFamily IPv4 -ErrorAction SilentlyContinue | Where-Object { $_.IPAddress -eq $IPAddress }
+
+        if ($currentIP) {
+            Write-Log "IP $IPAddress already exists on $InterfaceAlias. Skipping assignment."
+        } else {
+            # Remove existing IPs on this interface (if any) to avoid conflicts
+            Get-NetIPAddress -InterfaceAlias $InterfaceAlias -AddressFamily IPv4 -ErrorAction SilentlyContinue | Remove-NetIPAddress -Confirm:$false -ErrorAction Stop
+
+            # Assign new IP
+            $params = @{
+                InterfaceAlias = $InterfaceAlias
+                IPAddress = $IPAddress
+                PrefixLength = $PrefixLength
+                ErrorAction = "Stop"
+            }
+            if ($DefaultGateway) { $params.DefaultGateway = $DefaultGateway }
+            New-NetIPAddress @params | Out-Null
+
+            # Set DNS servers if provided
+            if ($DnsServers) {
+                Set-DnsClientServerAddress -InterfaceAlias $InterfaceAlias -ServerAddresses $DnsServers -ErrorAction Stop
+            }
+            Write-Log "Assigned IP $IPAddress to $InterfaceAlias."
+        }
+    }
+
     # Internet Interface
-    New-NetIPAddress -InterfaceAlias $InterfaceInternet -IPAddress $IPInternet -PrefixLength $PrefixLength -DefaultGateway "192.168.100.1" -ErrorAction Stop | Out-Null
-    Set-DnsClientServerAddress -InterfaceAlias $InterfaceInternet -ServerAddresses ("8.8.8.8", "1.1.1.1") -ErrorAction Stop
+    Set-InterfaceIP -InterfaceAlias $InterfaceInternet -IPAddress $IPInternet -PrefixLength $PrefixLength -DefaultGateway "192.168.100.1" -DnsServers ("8.8.8.8", "1.1.1.1")
 
     # VanPhong Interface
-    New-NetIPAddress -InterfaceAlias $InterfaceVanPhong -IPAddress $IPVanPhong -PrefixLength $PrefixLength -ErrorAction Stop | Out-Null
+    Set-InterfaceIP -InterfaceAlias $InterfaceVanPhong -IPAddress $IPVanPhong -PrefixLength $PrefixLength
 
     # BaoVe Interface
-    New-NetIPAddress -InterfaceAlias $InterfaceBaoVe -IPAddress $IPBaoVe -PrefixLength $PrefixLength -ErrorAction Stop | Out-Null
+    Set-InterfaceIP -InterfaceAlias $InterfaceBaoVe -IPAddress $IPBaoVe -PrefixLength $PrefixLength
 
     Write-Log "Network interfaces configured successfully."
 }
