@@ -44,18 +44,24 @@ foreach ($iface in @($InterfaceInternet, $InterfaceVanPhong, $InterfaceBaoVe)) {
 # Gan IP tinh
 # ========================
 Write-Host "Cau hinh IP tinh cho $InterfaceInternet..."
-# Xoa IP cu neu co
+# Tat DHCP tren giao dien
+Set-NetIPInterface -InterfaceAlias $InterfaceInternet -Dhcp Disabled -ErrorAction SilentlyContinue
+# Xoa tat ca IP cu (IPv4 va IPv6) neu co
 Get-NetIPAddress -InterfaceAlias $InterfaceInternet -ErrorAction SilentlyContinue | Remove-NetIPAddress -Confirm:$false -ErrorAction SilentlyContinue
 New-NetIPAddress -InterfaceAlias $InterfaceInternet -IPAddress $IPInternet -PrefixLength $Netmask -DefaultGateway $Gateway -ErrorAction Stop
 Set-DnsClientServerAddress -InterfaceAlias $InterfaceInternet -ServerAddresses ($DNSServer, "8.8.8.8")
 
 Write-Host "Cau hinh IP tinh cho $InterfaceVanPhong..."
-# Xoa IP cu neu co
+# Tat DHCP tren giao dien
+Set-NetIPInterface -InterfaceAlias $InterfaceVanPhong -Dhcp Disabled -ErrorAction SilentlyContinue
+# Xoa tat ca IP cu neu co
 Get-NetIPAddress -InterfaceAlias $InterfaceVanPhong -ErrorAction SilentlyContinue | Remove-NetIPAddress -Confirm:$false -ErrorAction SilentlyContinue
 New-NetIPAddress -InterfaceAlias $InterfaceVanPhong -IPAddress $IPVanPhong -PrefixLength $Netmask -ErrorAction Stop
 
 Write-Host "Cau hinh IP tinh cho $InterfaceBaoVe..."
-# Xoa IP cu neu co
+# Tat DHCP tren giao dien
+Set-NetIPInterface -InterfaceAlias $InterfaceBaoVe -Dhcp Disabled -ErrorAction SilentlyContinue
+# Xoa tat ca IP cu neu co
 Get-NetIPAddress -InterfaceAlias $InterfaceBaoVe -ErrorAction SilentlyContinue | Remove-NetIPAddress -Confirm:$false -ErrorAction SilentlyContinue
 New-NetIPAddress -InterfaceAlias $InterfaceBaoVe -IPAddress $IPBaoVe -PrefixLength $Netmask -ErrorAction Stop
 
